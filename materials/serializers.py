@@ -147,3 +147,13 @@ class SuggestionSerializer(serializers.Serializer):
     km = serializers.FloatField()
     kg_left = serializers.IntegerField()
     suggested_kg = serializers.IntegerField()
+
+
+class AskSerializer(serializers.Serializer):
+    """Input for asking one seller. Amount rules (at least 1 kg, not more than is left) stay in services."""
+    listing = serializers.PrimaryKeyRelatedField(queryset=Listing.objects.all())
+    kg = serializers.IntegerField()
+
+
+class DistanceSerializer(serializers.Serializer):
+    max_km = serializers.ChoiceField(choices=Need.DISTANCES)
