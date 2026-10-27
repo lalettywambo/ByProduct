@@ -1,6 +1,4 @@
 """Turn models into JSON and check incoming JSON. The business rules themselves live in services.py."""
-from django.contrib.auth.models import User
-from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -26,6 +24,13 @@ class MaterialSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "kg_per_sack"]
 
 
+class BusinessSerializer(serializers.ModelSerializer):
+    """Used when adding a business, so the phone is accepted here."""
+    class Meta:
+        model = Business
+        fields = ["id", "name", "kind", "area", "phone"]
+
+
 class PublicBusinessSerializer(serializers.ModelSerializer):
     """What anyone may see about a business. No phone: that is shared only after a pickup is agreed."""
     area = serializers.StringRelatedField()
@@ -39,65 +44,26 @@ class PublicBusinessSerializer(serializers.ModelSerializer):
         return services.completed_pickups(business)
 
 
-class BusinessSerializer(serializers.ModelSerializer):
-    """The logged-in business's own profile, phone included."""
-    class Meta:
-        model = Business
-        fields = ["id", "name", "kind", "area", "phone"]
-
-
-class RegisterSerializer(serializers.Serializer):
-    username = serializers.CharField(max_length=150)
-    password = serializers.CharField(write_only=True)
-    business = BusinessSerializer()
-
-    def validate_username(self, value):
-        if User.objects.filter(username=value).exists():
-            raise serializers.ValidationError("That username is taken.")
-        return value
-
-    def validate_password(self, value):
-        validate_password(value)  # Django's built-in strength checks
-        return value
-
-    def create(self, data):
-        # create_user hashes the password; the raw password is never stored.
-        user = User.objects.create_user(username=data["username"], password=data["password"])
-        return Business.objects.create(user=user, **data["business"])
-
-
 class ListingSerializer(serializers.ModelSerializer):
     business = PublicBusinessSerializer(read_only=True)
     material_name = serializers.StringRelatedField(source="material", read_only=True)
     kg_left = serializers.SerializerMethodField()
+    live = serializers.SerializerMethodField()
 
     class Meta:
         model = Listing
-        fields = ["id", "business", "material", "material_name", "quantity", "unit", "kg", "kg_left",
+        fields = ["id", "business", "material", "material_name", "quantity", "unit", "kg", "kg_left", "live",
                   "condition", "price_per_unit", "available_until", "description", "withdrawn", "created_at"]
         read_only_fields = ["kg", "withdrawn", "created_at"]
 
     def get_kg_left(self, listing):
         return services.kg_left(listing)
 
+    def get_live(self, listing):
+        return services.is_live(listing)
+
     def validate_available_until(self, day):
         return check_not_in_past(day)
-
-    def validate(self, data):
-        listing = self.instance
-        if listing is None:
-            return data
-        if "material" in data and data["material"] != listing.material:
-            raise serializers.ValidationError("The material can't change once a listing exists.")
-        # A seller can shrink a listing, but never below what buyers were already promised.
-        quantity = data.get("quantity", listing.quantity)
-        unit = data.get("unit", listing.unit)
-        new_kg = quantity * (listing.material.kg_per_sack if unit == "sack" else 1)
-        promised = services.kg_promised(listing)
-        if new_kg < promised:
-            raise serializers.ValidationError(
-                f"{promised} kg is already promised to buyers, so the listing can't be smaller than that.")
-        return data
 
 
 class NeedSerializer(serializers.ModelSerializer):
@@ -142,18 +108,10 @@ class PickupSerializer(serializers.ModelSerializer):
 
 
 class SuggestionSerializer(serializers.Serializer):
-    """One row of plan(): a seller to ask and how much to ask them for."""
-    listing = ListingSerializer()
+    """One row of plan(): a seller to ask and how much to ask them for. Flat, and no phone."""
+    listing = serializers.IntegerField(source="listing.id")
+    seller = serializers.CharField(source="listing.business.name")
+    area = serializers.CharField(source="listing.business.area.name")
     km = serializers.FloatField()
     kg_left = serializers.IntegerField()
     suggested_kg = serializers.IntegerField()
-
-
-class AskSerializer(serializers.Serializer):
-    """Input for asking one seller. Amount rules (at least 1 kg, not more than is left) stay in services."""
-    listing = serializers.PrimaryKeyRelatedField(queryset=Listing.objects.all())
-    kg = serializers.IntegerField()
-
-
-class DistanceSerializer(serializers.Serializer):
-    max_km = serializers.ChoiceField(choices=Need.DISTANCES)
