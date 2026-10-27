@@ -1,12 +1,12 @@
 """API endpoints. Each view reads the request, calls a rule in services.py and returns JSON."""
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from . import services
 from .models import Area, Business, Material
-from .serializers import AreaSerializer, MaterialSerializer
+from .serializers import AreaSerializer, BusinessSerializer, MaterialSerializer, RegisterSerializer
 
 
 def business_of(request):
@@ -41,3 +41,30 @@ def material_list(request):
 def impact(request):
     return Response(services.impact())
 
+
+
+# ---------- Accounts ----------
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def register(request):
+    """Create the login and its business in one step."""
+    serializer = RegisterSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    business = serializer.save()
+    return Response({"username": business.user.username, "business": BusinessSerializer(business).data},
+                    status=201)
+
+
+@api_view(["GET", "PATCH"])
+def profile(request):
+    business = Business.objects.filter(user=request.user).first()
+    if request.method == "GET":
+        if business is None:
+            raise NotFound("Add your business details first.")
+        return Response(BusinessSerializer(business).data)
+    # A user without a business yet (like the admin) creates one here; everyone else updates theirs.
+    serializer = BusinessSerializer(business, data=request.data, partial=business is not None)
+    serializer.is_valid(raise_exception=True)
+    serializer.save(user=request.user)
+    return Response(serializer.data)
