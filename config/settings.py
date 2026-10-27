@@ -138,15 +138,9 @@ MAILERS = {
 
 
 # API
-# Basic auth first so a missing login answers 401 (with a WWW-Authenticate header) instead of 403.
-# Every endpoint needs a logged-in business unless the view says otherwise.
+# No login in this demo version: each request says which business is acting (see materials/views.py).
 
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.BasicAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
-    ],
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
-    ],
+    'DEFAULT_AUTHENTICATION_CLASSES': [],
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.AllowAny'],
 }
