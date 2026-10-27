@@ -5,7 +5,7 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
-from .models import Listing, Pickup
+from .models import Listing, Need, Pickup
 
 HOLDS_KILOS = [Pickup.ACCEPTED, Pickup.COLLECTED]                       # take kilos off a listing
 COUNTS_FOR_NEED = [Pickup.PENDING, Pickup.ACCEPTED, Pickup.COLLECTED]   # already asked for
@@ -185,6 +185,18 @@ def close_need(need, by):
     need.closed = True
     need.save()
     return need.pickups.filter(status=Pickup.PENDING).update(status=Pickup.CANCELLED)
+
+
+def change_distance(need, max_km, by):
+    """The buyer widens or narrows the search, e.g. to 20 km when nobody nearby has enough."""
+    if by != need.business:
+        raise RuleError("Only the buyer can change this need.")
+    # max_km may arrive as text from a form, so compare as text against the allowed choices.
+    if str(max_km) not in [str(km) for km, label in Need.DISTANCES]:
+        raise RuleError("Pick 5, 10 or 20 km.")
+    need.max_km = int(max_km)
+    need.save()
+    return need
 
 
 def withdraw(listing, by):
