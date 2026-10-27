@@ -2,7 +2,7 @@
 from datetime import date, timedelta
 from io import StringIO
 
-from django.core.management import call_command
+from django.core.management import CommandError, call_command
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -351,3 +351,31 @@ class LoadBasics(TestCase):
         call_command("load_basics", stdout=StringIO())
         call_command("load_basics", stdout=StringIO())
         self.assertEqual((Area.objects.count(), Material.objects.count()), (20, 8))
+
+
+class SeedDemo(APITestCase):
+    def setUp(self):
+        call_command("load_basics", stdout=StringIO())
+
+    def test_running_twice_is_safe(self):
+        call_command("seed_demo", stdout=StringIO())
+        call_command("seed_demo", stdout=StringIO())
+        self.assertEqual(Business.objects.count(), 12)
+        self.assertEqual(len(self.client.get("/api/listings/").data), 9)
+        self.assertEqual(self.client.get("/api/impact/").data["total_kg"], 1215)
+
+    def test_demo_need_finds_the_five_carpenters(self):
+        call_command("seed_demo", stdout=StringIO())
+        moto = Business.objects.get(name="Moto Briquettes")
+        sawdust = Material.objects.get(name="Sawdust")
+        response = self.client.post("/api/needs/", {"business": moto.id, "material": sawdust.id, "kg": 1200,
+                                                    "max_km": 10, "needed_by": timezone.localdate().isoformat()})
+        page = self.client.get(f"/api/needs/{response.data['id']}/?business={moto.id}").data
+        self.assertEqual(len(page["suggestions"]), 5)
+        self.assertEqual(page["covered_kg"], 1070)
+        self.assertNotIn("Kawangware Timber Yard", [row["seller"] for row in page["suggestions"]])
+
+    def test_needs_load_basics_first(self):
+        Area.objects.all().delete()
+        with self.assertRaisesMessage(CommandError, "Run python manage.py load_basics first."):
+            call_command("seed_demo", stdout=StringIO())
