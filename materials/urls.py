@@ -20,4 +20,6 @@ urlpatterns = [
     path("needs/<int:pk>/ask-all/", views.need_ask_all, name="need_ask_all"),
     path("needs/<int:pk>/distance/", views.need_distance, name="need_distance"),
     path("needs/<int:pk>/close/", views.need_close, name="need_close"),
+    path("pickups/", views.pickup_list, name="pickup_list"),
+    path("pickups/<int:pk>/<str:action>/", views.pickup_action, name="pickup_action"),
 ]

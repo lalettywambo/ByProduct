@@ -1,6 +1,7 @@
 """API endpoints. Each view reads the request, calls a rule in services.py and returns JSON."""
 from datetime import timedelta
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
@@ -9,7 +10,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 
 from . import services
-from .models import Area, Business, Listing, Material, Need
+from .models import Area, Business, Listing, Material, Need, Pickup
 from .serializers import (AreaSerializer, AskSerializer, BusinessSerializer, DistanceSerializer,
                           ListingSerializer, MaterialSerializer, NeedSerializer, PickupSerializer,
                           RegisterSerializer, SuggestionSerializer)
@@ -238,3 +239,58 @@ def need_close(request, pk):
         return rule_error(error)
     return Response({"message": f"Need closed. {cancelled} unanswered request(s) were cancelled.",
                      "need": NeedSerializer(need).data})
+
+
+# ---------- Pickups (both sides) ----------
+
+def my_pickups(business):
+    """Pickups where this business is the buyer or the seller."""
+    return (Pickup.objects.filter(Q(need__business=business) | Q(listing__business=business))
+            .select_related("need__business", "listing__business", "listing__material"))
+
+
+@api_view(["GET"])
+def pickup_list(request):
+    """Optional ?status=pending (or accepted, collected...) to see e.g. requests waiting for an answer."""
+    business = business_of(request)
+    pickups = my_pickups(business)
+    status = request.query_params.get("status")
+    if status:
+        pickups = pickups.filter(status=status)
+    return Response(PickupSerializer(pickups, many=True, context={"business": business}).data)
+
+
+@api_view(["POST"])
+def pickup_action(request, pk, action):
+    """accept / decline (seller), cancel (either side), collected (buyer). services.py decides who may."""
+    business = business_of(request)
+    pickup = get_object_or_404(my_pickups(business), pk=pk)
+    try:
+        if action == "accept":
+            pickup, declined = services.accept(pickup, business)
+            message = f"Agreed. Call {pickup.buyer} on {pickup.buyer.phone} to arrange the pickup."
+            if declined:
+                message += f" {declined} other request(s) no longer fit and were declined."
+        elif action == "decline":
+            services.decline(pickup, business)
+            message = "Declined."
+        elif action == "cancel":
+            services.cancel(pickup, business)
+            message = "Pickup cancelled. Those kilos are free again."
+        elif action == "collected":
+            services.mark_collected(pickup, business)
+            message = f"Marked as collected: {pickup.kg} kg reused."
+        else:
+            raise NotFound("Unknown action.")
+    except services.RuleError as error:
+        return rule_error(error)
+
+    data = {
+        "message": message,
+        "pickup": PickupSerializer(pickup, context={"business": business}).data,
+        "listing_kg_left": services.kg_left(pickup.listing),
+    }
+    # The need's progress is private to the buyer.
+    if business == pickup.buyer:
+        data["need_progress"] = services.progress(pickup.need)
+    return Response(data)
