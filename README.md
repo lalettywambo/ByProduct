@@ -8,7 +8,7 @@ ByProduct is a Django REST API where businesses list leftovers and post what the
 
 ## Tech stack
 
-- Python 3.13, Django 6.1, Django REST Framework 3.18
+- Python 3.13, Django 6.1.2, Django REST Framework 3.18.3
 - PostgreSQL on Neon (psycopg 3), configured with `dj-database-url`
 - Settings read from `.env` with `python-dotenv`
 
@@ -34,76 +34,69 @@ Then set up the database and start the server:
 ```powershell
 python manage.py migrate
 python manage.py load_basics        # 20 Nairobi areas and 8 materials; safe to run again
-python manage.py createsuperuser    # optional, for /admin/
 python manage.py runserver
 ```
 
-Open http://127.0.0.1:8000/api/listings/ to use the API in the browser. Log in at http://127.0.0.1:8000/api-auth/login/.
+Open http://127.0.0.1:8000/api/basics/ to try the API in the browser.
 
-## Logging in
+## No login (demo version)
 
-There is no token system. The API uses DRF's built-in authentication:
+This is a capstone demo, so there are no accounts. Every request that acts says which business is acting:
+- a `"business": <id>` field in the body for POST requests
+- `?business=<id>` in the URL for `GET /api/needs/<id>/`
 
-- **Postman or curl:** send the username and password with each request (Basic auth). In Postman: Authorization → Basic Auth.
-- **Browser:** log in once at `/api-auth/login/`.
-
-Anyone can read areas, materials, live listings and the impact summary. Everything else needs a logged-in business.
+The rules still check that it's the right business. For example, only the seller can accept, and only the buyer can mark a pickup as collected.
 
 ## Endpoints
 
-All under `/api/`. Write requests accept JSON or form data.
+All under `/api/`. Request bodies can be JSON or form data.
 
-| Method | URL | Who | What it does |
-|---|---|---|---|
-| GET | `areas/` | anyone | The 20 areas |
-| GET | `materials/` | anyone | The 8 materials and their sack weights |
-| GET | `impact/` | anyone | Kilos reused, completed pickups, kilos by material |
-| POST | `register/` | anyone | Create a login and its business |
-| GET, PATCH | `profile/` | business | Your business details |
-| GET | `listings/?material=<id>&area=<id>` | anyone | Live listings with `kg_left` |
-| POST | `listings/` | business | List leftovers (in `kg` or `sack`) |
-| GET | `listings/mine/` | business | All your listings, including expired and withdrawn |
-| GET, PATCH | `listings/<id>/` | anyone / owner | View / edit (the material can't change) |
-| POST | `listings/<id>/withdraw/` | owner | Take it down; waiting requests are declined |
-| POST | `listings/<id>/again/` | owner | Re-post an expired listing for 7 more days |
-| GET, POST | `needs/` | business | Your needs / post a need |
-| GET | `needs/<id>/` | owner | The need, its progress and its pickup requests |
-| GET | `needs/<id>/matches/` | owner | Suggested sellers and amounts, nearest first |
-| POST | `needs/<id>/ask/` | owner | Ask one seller: `listing`, `kg` |
-| POST | `needs/<id>/ask-all/` | owner | Ask every suggested seller (all or nothing) |
-| POST | `needs/<id>/distance/` | owner | Change `max_km` to 5, 10 or 20 |
-| POST | `needs/<id>/close/` | owner | Stop looking; waiting requests are cancelled |
-| GET | `pickups/?status=pending` | business | Pickups where you are the buyer or the seller |
-| POST | `pickups/<id>/accept/` | seller | Agree; returns the buyer's phone |
-| POST | `pickups/<id>/decline/` | seller | Say no |
-| POST | `pickups/<id>/cancel/` | buyer, or either side once agreed | Cancel; the kilos are free again |
-| POST | `pickups/<id>/collected/` | buyer | Confirm collection; closes the need when complete |
+| Method | URL | What it does |
+|---|---|---|
+| GET | `basics/` | Areas, materials and businesses, for dropdowns and the "I am" picker |
+| POST | `businesses/` | Add a business: `name`, `kind`, `area`, `phone` |
+| GET | `businesses/<id>/` | Dashboard: its listings, open needs, requests waiting for its answer, and agreed pickups with the other side's phone |
+| GET | `listings/?material=<id>&area=<id>` | Browse live listings with `kg_left` |
+| POST | `listings/` | List leftovers: `business`, `material`, `quantity`, `unit` (`kg` or `sack`), `available_until`, plus optional `condition`, `price_per_unit`, `description` |
+| POST | `listings/<id>/withdraw/` | Take a listing down; waiting requests are declined |
+| POST | `listings/<id>/again/` | Re-post a listing that's no longer live, for 7 more days |
+| POST | `needs/` | Post a need: `business`, `material`, `kg`, `max_km` (5, 10 or 20), `needed_by`, optional `note` |
+| GET | `needs/<id>/?business=<id>` | Progress, suggested sellers and pickup requests in one response (buyer only) |
+| POST | `needs/<id>/ask/` | Ask one seller: `business`, `listing`, `kg` |
+| POST | `needs/<id>/ask-all/` | Ask every suggested seller (all or nothing) |
+| POST | `needs/<id>/distance/` | Change `max_km` to 5, 10 or 20 |
+| POST | `needs/<id>/close/` | Stop looking; waiting requests are cancelled |
+| POST | `pickups/<id>/accept/` | Seller agrees (the response includes the buyer's phone) |
+| POST | `pickups/<id>/decline/` | Seller says no |
+| POST | `pickups/<id>/cancel/` | Buyer cancels a waiting request, or either side cancels an agreed pickup |
+| POST | `pickups/<id>/collected/` | Buyer confirms collection; closes the need when everything is in |
+| GET | `impact/` | Kilos reused, completed pickups and kilos by material |
 
 **Responses**
 - `200` / `201` with JSON. Actions also return a `message` to show the user.
-- `400` when input is invalid (field errors) or a rule says no: `{"detail": "Only 220 kg is left on that listing."}`
-- `401` when you're not logged in.
-- `404` for something that isn't yours, such as another business's need or pickup.
+- `400` when input is invalid or a rule says no: `{"detail": "Only the seller can accept."}`
+- `400` with `{"business": "Say which business is acting."}` when the acting business is missing.
+- `404` for an unknown id or action, or a need opened by a business that didn't post it.
 
-**Privacy:** phone numbers never appear on public listings. In a pickup, `other_phone` shows the other business's number only once the seller has agreed.
+**Privacy:** phone numbers never appear on listings. In a pickup, `other_phone` shows the other side's number only once the pickup is agreed or collected.
 
 ### Example: the demo flow with curl
 
 ```powershell
-# A buyer posts a need for 1,200 kg of sawdust (material 1) within 10 km
-curl.exe -u moto:Briquettes-2026 -d "material=1" -d "kg=1200" -d "max_km=10" -d "needed_by=2026-10-30" http://127.0.0.1:8000/api/needs/
+# Moto Briquettes (business 9) needs 1,200 kg of sawdust (material 1) within 10 km
+curl.exe -d "business=9" -d "material=1" -d "kg=1200" -d "max_km=10" -d "needed_by=2026-10-30" http://127.0.0.1:8000/api/needs/
 
 # See the suggested sellers, then ask them all
-curl.exe -u moto:Briquettes-2026 http://127.0.0.1:8000/api/needs/1/matches/
-curl.exe -u moto:Briquettes-2026 -X POST http://127.0.0.1:8000/api/needs/1/ask-all/
+curl.exe "http://127.0.0.1:8000/api/needs/1/?business=9"
+curl.exe -d "business=9" http://127.0.0.1:8000/api/needs/1/ask-all/
 
-# A seller accepts one of the requests
-curl.exe -u doors:<password> -X POST http://127.0.0.1:8000/api/pickups/1/accept/
+# Kariobangi Doors (business 1) accepts its request
+curl.exe -d "business=1" http://127.0.0.1:8000/api/pickups/1/accept/
 ```
 
 ## How the rules work
 
-All the business rules are in [materials/services.py](materials/services.py). The views only read the request, call one service function, and turn its answer (or its `RuleError`) into JSON.
+All the business rules are in [materials/services.py](materials/services.py). The views only find the acting business, call one service function, and turn its answer (or its `RuleError`) into JSON.
 
 - **Kilos left** = the listing's kg minus agreed and collected pickups. It's calculated, never stored. Waiting requests don't hold kilos, so a seller who never answers can't freeze a pile.
 - **Matching:** same material, still live, not your own, within your distance (the haversine formula between area centres). Nearest first, then biggest.
@@ -117,9 +110,9 @@ All the business rules are in [materials/services.py](materials/services.py). Th
 python manage.py test materials
 ```
 
-24 tests:
+18 tests:
 - 12 real-world scenarios against the rules, including the worked example: a 1,200 kg sawdust need in Kariobangi finds 5 sellers covering 1,070 kg.
-- 11 API tests covering logins, privacy, ownership, validation and status codes.
+- 5 API tests: the worked example end to end, a missing acting business, the wrong business accepting or collecting, phone privacy, and impact.
 - 1 test that `load_basics` creates no duplicates.
 
 On Neon the run takes several minutes, because Django creates a temporary test database there.
