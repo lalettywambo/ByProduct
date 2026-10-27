@@ -1,6 +1,7 @@
 """ByProduct rules. Views call these functions; they never change pickups directly."""
 from math import asin, cos, radians, sin, sqrt
 
+from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
@@ -88,3 +89,137 @@ def plan(need, today=None):
         suggestions.append({**row, "suggested_kg": take})
         still_needed -= take
     return {"suggestions": suggestions, "covered_kg": sum(s["suggested_kg"] for s in suggestions)}
+
+
+@transaction.atomic
+def ask_for_pickup(need, listing, kg, by, today=None):
+    if by != need.business:
+        raise RuleError("Only the business that posted this need can ask for pickups.")
+    if need.closed:
+        raise RuleError("This need is closed.")
+    if listing.business == need.business:
+        raise RuleError("You can't ask for your own listing.")
+    if listing.material_id != need.material_id:
+        raise RuleError("That listing is a different material.")
+    if not is_live(listing, today):
+        raise RuleError("That listing is no longer available.")
+    if need.pickups.filter(listing=listing, status__in=ACTIVE).exists():
+        raise RuleError("You've already asked this seller. Wait for their answer.")
+    if kg <= 0:
+        raise RuleError("Ask for at least 1 kg.")
+    if kg > kg_left(listing):
+        raise RuleError(f"Only {kg_left(listing)} kg is left on that listing.")
+    if kg > kg_still_needed(need):
+        raise RuleError(f"You only need {kg_still_needed(need)} kg more.")
+    return Pickup.objects.create(listing=listing, need=need, kg=kg)
+
+
+@transaction.atomic
+def ask_all(need, by, today=None):
+    """One click: ask every suggested seller for their suggested amount. All or nothing."""
+    suggestions = plan(need, today)["suggestions"]
+    return [ask_for_pickup(need, s["listing"], s["suggested_kg"], by, today) for s in suggestions]
+
+
+@transaction.atomic
+def accept(pickup, by):
+    # Lock the rows so two buyers accepted at the same moment can't both get the last kilos.
+    pickup = Pickup.objects.select_for_update().select_related("listing__business").get(pk=pickup.pk)
+    listing = Listing.objects.select_for_update().get(pk=pickup.listing_id)
+    if by != pickup.seller:
+        raise RuleError("Only the seller can accept.")
+    if pickup.status != Pickup.PENDING:
+        raise RuleError("Only waiting requests can be accepted.")
+    left = kg_left(listing)
+    if pickup.kg > left:
+        raise RuleError(f"Only {left} kg is left, so this request can't be accepted.")
+    pickup.status = Pickup.ACCEPTED
+    pickup.save()
+    # Waiting requests that no longer fit are declined automatically.
+    left = kg_left(listing)
+    declined = listing.pickups.filter(status=Pickup.PENDING, kg__gt=left).update(status=Pickup.DECLINED)
+    return pickup, declined
+
+
+def decline(pickup, by):
+    if by != pickup.seller:
+        raise RuleError("Only the seller can decline.")
+    if pickup.status != Pickup.PENDING:
+        raise RuleError("Only waiting requests can be declined.")
+    pickup.status = Pickup.DECLINED
+    pickup.save()
+    return pickup
+
+
+def cancel(pickup, by):
+    """The buyer can cancel a waiting request. Either side can cancel an agreed pickup (plans change, no-shows)."""
+    buyer_cancels_waiting = pickup.status == Pickup.PENDING and by == pickup.buyer
+    either_cancels_agreed = pickup.status == Pickup.ACCEPTED and by in (pickup.buyer, pickup.seller)
+    if not (buyer_cancels_waiting or either_cancels_agreed):
+        raise RuleError("You can't cancel this pickup.")
+    # No kilos to hand back: kg_left is calculated, so a cancelled pickup simply stops counting.
+    pickup.status = Pickup.CANCELLED
+    pickup.save()
+    return pickup
+
+
+def mark_collected(pickup, by):
+    """The buyer confirms they took the material. Only collected kilos count as reused."""
+    if by != pickup.buyer:
+        raise RuleError("Only the buyer can mark a pickup as collected.")
+    if pickup.status != Pickup.ACCEPTED:
+        raise RuleError("Only agreed pickups can be marked collected.")
+    pickup.status = Pickup.COLLECTED
+    pickup.save()
+    need = pickup.need
+    if kg_collected(need) >= need.kg:
+        need.closed = True
+        need.save()
+    return pickup
+
+
+def close_need(need, by):
+    """The buyer stops looking. Requests still waiting for an answer are cancelled; agreed pickups stay."""
+    if by != need.business:
+        raise RuleError("Only the buyer can close this need.")
+    need.closed = True
+    need.save()
+    return need.pickups.filter(status=Pickup.PENDING).update(status=Pickup.CANCELLED)
+
+
+def withdraw(listing, by):
+    """The seller takes a listing down. Waiting requests are declined; agreed pickups stay."""
+    if by != listing.business:
+        raise RuleError("Only the seller can withdraw this listing.")
+    listing.withdrawn = True
+    listing.save()
+    return listing.pickups.filter(status=Pickup.PENDING).update(status=Pickup.DECLINED)
+
+
+def list_again(listing, by, available_until, today=None):
+    """Sellers with a steady supply (a weekly pile of sawdust) re-post in one click."""
+    if by != listing.business:
+        raise RuleError("Only the seller can list this again.")
+    if is_live(listing, today):
+        raise RuleError("This listing is still live. Edit it instead.")
+    return Listing.objects.create(
+        business=listing.business, material=listing.material, quantity=listing.quantity,
+        unit=listing.unit, condition=listing.condition, price_per_unit=listing.price_per_unit,
+        available_until=available_until, description=listing.description,
+    )
+
+
+def completed_pickups(business):
+    """A simple trust signal shown next to each business name."""
+    return (Pickup.objects.filter(status=Pickup.COLLECTED, listing__business=business).count()
+            + Pickup.objects.filter(status=Pickup.COLLECTED, need__business=business).count())
+
+
+def impact():
+    """Kilos reused (collected) in total and by material, for the impact summary."""
+    collected = Pickup.objects.filter(status=Pickup.COLLECTED)
+    rows = list(collected.values("listing__material__name").annotate(total=Sum("kg")).order_by("-total"))
+    biggest = rows[0]["total"] if rows else 0
+    by_material = [{"material": r["listing__material__name"], "kg": r["total"],
+                    "bar_percent": round(100 * r["total"] / biggest)} for r in rows]
+    return {"total_kg": _sum(collected), "pickups": collected.count(), "by_material": by_material}
