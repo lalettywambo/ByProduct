@@ -16,7 +16,7 @@ class MaterialAdmin(admin.ModelAdmin):
 
 @admin.register(Business)
 class BusinessAdmin(admin.ModelAdmin):
-    list_display = ["name", "kind", "area", "phone", "user"]
+    list_display = ["name", "kind", "area", "phone"]
     list_filter = ["area"]
     search_fields = ["name"]
 
