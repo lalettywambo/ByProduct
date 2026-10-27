@@ -1,12 +1,17 @@
 """API endpoints. Each view reads the request, calls a rule in services.py and returns JSON."""
+from datetime import timedelta
+
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import NotFound, PermissionDenied
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 
 from . import services
-from .models import Area, Business, Material
-from .serializers import AreaSerializer, BusinessSerializer, MaterialSerializer, RegisterSerializer
+from .models import Area, Business, Listing, Material
+from .serializers import (AreaSerializer, BusinessSerializer, ListingSerializer, MaterialSerializer,
+                          RegisterSerializer)
 
 
 def business_of(request):
@@ -68,3 +73,76 @@ def profile(request):
     serializer.is_valid(raise_exception=True)
     serializer.save(user=request.user)
     return Response(serializer.data)
+
+
+# ---------- Listings (sellers) ----------
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticatedOrReadOnly])
+def listing_list(request):
+    """GET: anyone can browse live listings. POST: a logged-in business lists its leftovers."""
+    if request.method == "POST":
+        business = business_of(request)
+        serializer = ListingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(business=business)
+        return Response(serializer.data, status=201)
+
+    today = timezone.localdate()
+    listings = (Listing.objects.filter(withdrawn=False, available_until__gte=today)
+                .select_related("business__area", "material"))
+    material = request.query_params.get("material", "")
+    area = request.query_params.get("area", "")
+    # Ignore filter values that aren't ids instead of failing the whole request.
+    if material.isdigit():
+        listings = listings.filter(material_id=material)
+    if area.isdigit():
+        listings = listings.filter(business__area_id=area)
+    # A fully promised listing isn't live, but kg_left is calculated, so that check happens in Python.
+    live = [listing for listing in listings if services.kg_left(listing) > 0]
+    return Response(ListingSerializer(live, many=True).data)
+
+
+@api_view(["GET"])
+def my_listings(request):
+    """All of the seller's own listings, including expired and withdrawn ones."""
+    listings = business_of(request).listings.select_related("business__area", "material")
+    return Response(ListingSerializer(listings, many=True).data)
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticatedOrReadOnly])
+def listing_detail(request, pk):
+    if request.method == "GET":
+        return Response(ListingSerializer(get_object_or_404(Listing, pk=pk)).data)
+    # Only the owner can edit; for anyone else the listing "isn't found".
+    listing = get_object_or_404(Listing, pk=pk, business=business_of(request))
+    serializer = ListingSerializer(listing, data=request.data, partial=True)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    return Response(serializer.data)
+
+
+@api_view(["POST"])
+def listing_withdraw(request, pk):
+    business = business_of(request)
+    listing = get_object_or_404(Listing, pk=pk, business=business)
+    try:
+        declined = services.withdraw(listing, business)
+    except services.RuleError as error:
+        return rule_error(error)
+    return Response({"message": f"Listing withdrawn. {declined} waiting request(s) were declined.",
+                     "listing": ListingSerializer(listing).data})
+
+
+@api_view(["POST"])
+def listing_again(request, pk):
+    business = business_of(request)
+    listing = get_object_or_404(Listing, pk=pk, business=business)
+    until = timezone.localdate() + timedelta(days=7)
+    try:
+        new_listing = services.list_again(listing, business, until)
+    except services.RuleError as error:
+        return rule_error(error)
+    return Response({"message": f"Listed again until {until:%d %b}. Edit it to change the date or amount.",
+                     "listing": ListingSerializer(new_listing).data}, status=201)
