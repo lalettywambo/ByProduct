@@ -9,9 +9,10 @@ from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 
 from . import services
-from .models import Area, Business, Listing, Material
-from .serializers import (AreaSerializer, BusinessSerializer, ListingSerializer, MaterialSerializer,
-                          RegisterSerializer)
+from .models import Area, Business, Listing, Material, Need
+from .serializers import (AreaSerializer, AskSerializer, BusinessSerializer, DistanceSerializer,
+                          ListingSerializer, MaterialSerializer, NeedSerializer, PickupSerializer,
+                          RegisterSerializer, SuggestionSerializer)
 
 
 def business_of(request):
@@ -146,3 +147,94 @@ def listing_again(request, pk):
         return rule_error(error)
     return Response({"message": f"Listed again until {until:%d %b}. Edit it to change the date or amount.",
                      "listing": ListingSerializer(new_listing).data}, status=201)
+
+
+# ---------- Needs (buyers) ----------
+
+def own_need(request, pk):
+    """Only the business that posted a need can see or change it; for anyone else it doesn't exist."""
+    business = business_of(request)
+    return business, get_object_or_404(Need.objects.select_related("material", "business__area"),
+                                       pk=pk, business=business)
+
+
+@api_view(["GET", "POST"])
+def need_list(request):
+    business = business_of(request)
+    if request.method == "POST":
+        serializer = NeedSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(business=business)
+        return Response(serializer.data, status=201)
+    return Response(NeedSerializer(business.needs.select_related("material"), many=True).data)
+
+
+@api_view(["GET"])
+def need_detail(request, pk):
+    business, need = own_need(request, pk)
+    pickups = need.pickups.select_related("listing__business", "listing__material", "need__business")
+    data = NeedSerializer(need).data
+    data["pickups"] = PickupSerializer(pickups, many=True, context={"business": business}).data
+    return Response(data)
+
+
+@api_view(["GET"])
+def need_matches(request, pk):
+    """The suggested sellers and amounts for this need, nearest first."""
+    business, need = own_need(request, pk)
+    if need.closed:
+        return Response({"suggestions": [], "covered_kg": 0, "still_needed": 0})
+    result = services.plan(need)
+    return Response({
+        "suggestions": SuggestionSerializer(result["suggestions"], many=True).data,
+        "covered_kg": result["covered_kg"],
+        "still_needed": services.kg_still_needed(need),
+    })
+
+
+@api_view(["POST"])
+def need_ask(request, pk):
+    business, need = own_need(request, pk)
+    serializer = AskSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    listing = serializer.validated_data["listing"]
+    try:
+        pickup = services.ask_for_pickup(need, listing, serializer.validated_data["kg"], business)
+    except services.RuleError as error:
+        return rule_error(error)
+    return Response({"message": f"Asked {listing.business} for {pickup.kg} kg.",
+                     "pickup": PickupSerializer(pickup, context={"business": business}).data}, status=201)
+
+
+@api_view(["POST"])
+def need_ask_all(request, pk):
+    business, need = own_need(request, pk)
+    try:
+        pickups = services.ask_all(need, business)
+    except services.RuleError as error:
+        return rule_error(error)
+    total = sum(pickup.kg for pickup in pickups)
+    return Response({"message": f"Asked the suggested sellers for {total} kg in total.",
+                     "pickups": PickupSerializer(pickups, many=True, context={"business": business}).data},
+                    status=201)
+
+
+@api_view(["POST"])
+def need_distance(request, pk):
+    business, need = own_need(request, pk)
+    serializer = DistanceSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    need.max_km = serializer.validated_data["max_km"]
+    need.save()
+    return Response(NeedSerializer(need).data)
+
+
+@api_view(["POST"])
+def need_close(request, pk):
+    business, need = own_need(request, pk)
+    try:
+        cancelled = services.close_need(need, business)
+    except services.RuleError as error:
+        return rule_error(error)
+    return Response({"message": f"Need closed. {cancelled} unanswered request(s) were cancelled.",
+                     "need": NeedSerializer(need).data})
