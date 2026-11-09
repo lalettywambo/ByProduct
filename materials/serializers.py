@@ -1,6 +1,11 @@
 """Turn models into JSON and check incoming JSON. The business rules themselves live in services.py."""
+from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from . import services
 from .models import Area, Business, Listing, Material, Need, Pickup
@@ -25,10 +30,49 @@ class MaterialSerializer(serializers.ModelSerializer):
 
 
 class BusinessSerializer(serializers.ModelSerializer):
-    """Used when adding a business, so the phone is accepted here."""
+    """Your own business, phone included. Other people only ever see PublicBusinessSerializer."""
     class Meta:
         model = Business
         fields = ["id", "name", "kind", "area", "phone"]
+
+
+class RegisterSerializer(serializers.ModelSerializer):
+    """Sign-up in one flat form: the login (username, password) and the business details."""
+    username = serializers.CharField(max_length=150, write_only=True)
+    password = serializers.CharField(write_only=True, style={"input_type": "password"})
+
+    class Meta:
+        model = Business
+        fields = ["username", "password", "name", "kind", "area", "phone"]
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("That username is taken.")
+        return value
+
+    def validate(self, data):
+        # Django's built-in password checks: long enough, not too common, not too like the username.
+        try:
+            validate_password(data["password"], user=User(username=data["username"]))
+        except DjangoValidationError as error:
+            raise serializers.ValidationError({"password": list(error.messages)})
+        return data
+
+    @transaction.atomic
+    def create(self, data):
+        # create_user stores a hash of the password, never the password itself.
+        user = User.objects.create_user(username=data.pop("username"), password=data.pop("password"))
+        return Business.objects.create(user=user, **data)
+
+
+class LoginSerializer(TokenObtainPairSerializer):
+    """simplejwt's login (username + password in, access + refresh tokens out), plus the business."""
+
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        business = Business.objects.filter(user=self.user).first()
+        data["business"] = BusinessSerializer(business).data if business else None
+        return data
 
 
 class PublicBusinessSerializer(serializers.ModelSerializer):

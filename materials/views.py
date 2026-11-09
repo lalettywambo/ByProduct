@@ -1,26 +1,29 @@
-"""API endpoints. Each view finds the acting business, calls one rule in services.py and returns JSON."""
+"""API endpoints. Each view finds the logged-in business, calls one rule in services.py and returns JSON."""
 from datetime import timedelta
 
 from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework.decorators import api_view
-from rest_framework.exceptions import ValidationError
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import services
 from .models import Area, Business, Listing, Material, Need, Pickup
 from .serializers import (AreaSerializer, BusinessSerializer, ListingSerializer, MaterialSerializer,
-                          NeedSerializer, PickupSerializer, PublicBusinessSerializer, SuggestionSerializer)
+                          NeedSerializer, PickupSerializer, PublicBusinessSerializer, RegisterSerializer,
+                          SuggestionSerializer)
 
 
-def acting_business(request):
-    """No login in this version: each request says which business is acting."""
-    business_id = request.data.get("business") or request.query_params.get("business")
-    if not str(business_id).isdigit():
-        raise ValidationError({"business": "Say which business is acting."})
-    return get_object_or_404(Business, pk=business_id)
+def my_business(request):
+    """The logged-in user's business. A login without one (like the admin) can't buy or sell."""
+    business = Business.objects.filter(user=request.user).first()
+    if business is None:
+        raise PermissionDenied("This account has no business profile.")
+    return business
 
 
 def rule_error(error):
@@ -29,37 +32,44 @@ def rule_error(error):
     return Response({"detail": str(error)}, status=status)
 
 
-# ---------- Basics and businesses ----------
-
-@api_view(["GET"])
-def basics(request):
-    """Everything a front end needs for its dropdowns and the "I am" business picker."""
-    return Response({
-        "areas": AreaSerializer(Area.objects.all(), many=True).data,
-        "materials": MaterialSerializer(Material.objects.all(), many=True).data,
-        "businesses": PublicBusinessSerializer(Business.objects.select_related("area"), many=True).data,
-    })
-
+# ---------- Accounts ----------
 
 @api_view(["POST"])
-def business_create(request):
-    serializer = BusinessSerializer(data=request.data)
+@permission_classes([AllowAny])
+def register(request):
+    """Sign up, and get tokens straight away so the React app is logged in after sign-up."""
+    serializer = RegisterSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data, status=201)
+    business = serializer.save()
+    refresh = RefreshToken.for_user(business.user)
+    return Response({"access": str(refresh.access_token), "refresh": str(refresh),
+                     "business": BusinessSerializer(business).data}, status=201)
 
 
-@api_view(["GET"])
-def business_dashboard(request, pk):
-    """One business's view: its listings, open needs, requests waiting for its answer and agreed pickups."""
-    business = get_object_or_404(Business.objects.select_related("area"), pk=pk)
+@api_view(["GET", "PATCH", "DELETE"])
+def me(request):
+    """GET: my business and dashboard. PATCH: edit my business. DELETE: close my account."""
+    business = my_business(request)
+    if request.method == "PATCH":
+        serializer = BusinessSerializer(business, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+    if request.method == "DELETE":
+        try:
+            services.delete_business(business, business)
+        except services.RuleError as error:
+            return rule_error(error)
+        return Response(status=204)
+
     context = {"business": business}
     involved = Q(listing__business=business) | Q(need__business=business)
     pickups = Pickup.objects.select_related("need__business", "listing__business", "listing__material")
     waiting = pickups.filter(listing__business=business, status=Pickup.PENDING)
     agreed = pickups.filter(involved, status=Pickup.ACCEPTED)
     return Response({
-        "business": PublicBusinessSerializer(business).data,
+        "business": BusinessSerializer(business).data,
+        "completed_pickups": services.completed_pickups(business),
         "listings": ListingSerializer(business.listings.select_related("material", "business__area"),
                                       many=True).data,
         "open_needs": NeedSerializer(business.needs.filter(closed=False), many=True).data,
@@ -68,13 +78,27 @@ def business_dashboard(request, pk):
     })
 
 
+# ---------- Basics ----------
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def basics(request):
+    """Areas, materials and businesses for the React app's dropdowns. No phone numbers."""
+    return Response({
+        "areas": AreaSerializer(Area.objects.all(), many=True).data,
+        "materials": MaterialSerializer(Material.objects.all(), many=True).data,
+        "businesses": PublicBusinessSerializer(Business.objects.select_related("area"), many=True).data,
+    })
+
+
 # ---------- Listings (sellers) ----------
 
 @api_view(["GET", "POST"])
+@permission_classes([IsAuthenticatedOrReadOnly])
 def listings(request):
     """GET: browse live listings, optionally ?material=<id>&area=<id>. POST: list leftovers."""
     if request.method == "POST":
-        business = acting_business(request)
+        business = my_business(request)
         serializer = ListingSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(business=business)
@@ -97,11 +121,11 @@ def listings(request):
 
 @api_view(["POST"])
 def listing_action(request, pk, action):
-    """withdraw | again. services.py checks that the acting business is the seller."""
+    """withdraw | again. services.py checks that the logged-in business is the seller."""
     if action not in ("withdraw", "again"):
         raise Http404("Unknown action.")
     listing = get_object_or_404(Listing, pk=pk)
-    business = acting_business(request)
+    business = my_business(request)
     try:
         if action == "withdraw":
             declined = services.withdraw(listing, business)
@@ -119,7 +143,7 @@ def listing_action(request, pk, action):
 
 @api_view(["POST"])
 def need_create(request):
-    business = acting_business(request)
+    business = my_business(request)
     serializer = NeedSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     serializer.save(business=business)
@@ -129,7 +153,7 @@ def need_create(request):
 @api_view(["GET"])
 def need_detail(request, pk):
     """Progress, suggested sellers and pickup requests in one response, for the buyer only."""
-    business = acting_business(request)
+    business = my_business(request)
     # Anyone but the buyer who posted the need gets "not found".
     need = get_object_or_404(Need.objects.select_related("material", "business__area"), pk=pk, business=business)
     result = {"suggestions": [], "covered_kg": 0} if need.closed else services.plan(need)
@@ -143,11 +167,11 @@ def need_detail(request, pk):
 
 @api_view(["POST"])
 def need_action(request, pk, action):
-    """ask | ask-all | distance | close. services.py checks that the acting business is the buyer."""
+    """ask | ask-all | distance | close. services.py checks that the logged-in business is the buyer."""
     if action not in ("ask", "ask-all", "distance", "close"):
         raise Http404("Unknown action.")
     need = get_object_or_404(Need, pk=pk)
-    business = acting_business(request)
+    business = my_business(request)
     try:
         if action == "ask":
             listing_id = request.data.get("listing", "")
@@ -185,7 +209,7 @@ def pickup_action(request, pk, action):
     if action not in ("accept", "decline", "cancel", "collected"):
         raise Http404("Unknown action.")
     pickup = get_object_or_404(Pickup.objects.select_related("need__business", "listing__business"), pk=pk)
-    business = acting_business(request)
+    business = my_business(request)
     try:
         if action == "accept":
             pickup, declined = services.accept(pickup, business)
@@ -218,5 +242,6 @@ def pickup_action(request, pk, action):
 # ---------- Impact ----------
 
 @api_view(["GET"])
+@permission_classes([AllowAny])
 def impact(request):
     return Response(services.impact())
