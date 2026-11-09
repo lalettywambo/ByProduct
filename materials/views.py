@@ -24,8 +24,9 @@ def acting_business(request):
 
 
 def rule_error(error):
-    """A rule in services.py said no: send its message back as a 400."""
-    return Response({"detail": str(error)}, status=400)
+    """A rule in services.py said no. The wrong business acting is 403; anything else (state, amounts) is 400."""
+    status = 403 if isinstance(error, services.NotAllowed) else 400
+    return Response({"detail": str(error)}, status=status)
 
 
 # ---------- Basics and businesses ----------
