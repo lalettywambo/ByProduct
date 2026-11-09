@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
@@ -30,7 +31,10 @@ class Material(models.Model):
 
 
 class Business(models.Model):
-    """A business on ByProduct. The same business can sell some things and buy others."""
+    """Every login is one business. The same business can sell some things and buy others."""
+    # Nullable only so the migration could run on businesses created before logins existed.
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True,
+                                related_name="business")
     name = models.CharField(max_length=120)
     kind = models.CharField(max_length=80, help_text="For example: tailor, carpenter, briquette maker")
     area = models.ForeignKey(Area, on_delete=models.PROTECT)
