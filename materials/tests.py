@@ -1,9 +1,12 @@
 """Real-world scenarios run against the rules in services.py, then against the API."""
+import os
 from datetime import date, timedelta
 from io import StringIO
+from unittest import mock
 
+from django.contrib.auth.models import User
 from django.core.management import CommandError, call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -27,7 +30,8 @@ class Fixtures:
         self.synthetic = Material.objects.create(name="Synthetic offcuts", kg_per_sack=20)
 
     def biz(self, name, area, kind="carpenter"):
-        return Business.objects.create(name=name, kind=kind, area=self.area[area], phone="0700000000")
+        user = User.objects.create_user(name.lower().replace(" ", ""), password="x-Pass-2026")
+        return Business.objects.create(user=user, name=name, kind=kind, area=self.area[area], phone="0700000000")
 
     def listing(self, seller, material, quantity, unit="kg", days=7, **kw):
         return Listing.objects.create(business=seller, material=material, quantity=quantity, unit=unit,
@@ -146,7 +150,7 @@ class Scenario(Fixtures, TestCase):
             s.accept(pk, moto)
         with self.assertRaisesMessage(s.RuleError, "Only agreed pickups"):
             s.mark_collected(pk, moto)
-        with self.assertRaisesMessage(s.RuleError, "can't cancel"):
+        with self.assertRaisesMessage(s.NotAllowed, "Only the buyer can cancel a waiting request."):
             s.cancel(pk, self.doors)
         s.accept(pk, self.doors)
         with self.assertRaisesMessage(s.RuleError, "Only the buyer can mark"):
@@ -227,15 +231,20 @@ class Scenario(Fixtures, TestCase):
 
 
 class Api(Fixtures, APITestCase):
-    """The same rules through the HTTP endpoints. Each request says which business is acting."""
+    """The same rules through the HTTP endpoints, logged in as the acting business."""
     # The views use the real date, so build listings relative to it.
     today = timezone.localdate()
 
     def post(self, url, business, **data):
-        return self.client.post(url, {"business": business.id, **data}, format="json")
+        self.client.force_authenticate(user=business.user)
+        return self.client.post(url, data, format="json")
+
+    def get(self, url, business):
+        self.client.force_authenticate(user=business.user)
+        return self.client.get(url)
 
     def need_page(self, need_id, business):
-        return self.client.get(f"/api/needs/{need_id}/?business={business.id}")
+        return self.get(f"/api/needs/{need_id}/", business)
 
     def post_need(self, buyer, kg, max_km=10):
         response = self.post("/api/needs/", buyer, material=self.sawdust.id, kg=kg, max_km=max_km,
@@ -278,7 +287,7 @@ class Api(Fixtures, APITestCase):
         impact = self.client.get("/api/impact/").data
         self.assertEqual((impact["total_kg"], impact["pickups"]), (220, 1))
 
-    def test_missing_business_returns_400(self):
+    def test_no_token_returns_401(self):
         self.carpenters()
         moto = self.biz("Moto Briquettes", "Kariobangi", kind="briquette maker")
         need = Need.objects.create(business=moto, material=self.sawdust, kg=100, needed_by=self.today)
@@ -289,8 +298,7 @@ class Api(Fixtures, APITestCase):
             self.client.get(f"/api/needs/{need.id}/"),
             self.client.post(f"/api/pickups/{pickup.id}/accept/", {}, format="json"),
         ]:
-            self.assertEqual(response.status_code, 400)
-            self.assertEqual(response.data, {"business": "Say which business is acting."})
+            self.assertEqual(response.status_code, 401)
 
     def test_wrong_business_cannot_accept_or_mark_collected(self):
         self.carpenters()
@@ -299,11 +307,13 @@ class Api(Fixtures, APITestCase):
         pickup = s.ask_for_pickup(need, self.l_doors, 100, moto)
         url = f"/api/pickups/{pickup.id}"
         for wrong in (moto, self.joinery):
-            self.assertEqual(self.post(f"{url}/accept/", wrong).data, {"detail": "Only the seller can accept."})
+            response = self.post(f"{url}/accept/", wrong)
+            self.assertEqual((response.status_code, response.data), (403, {"detail": "Only the seller can accept."}))
         self.assertEqual(self.post(f"{url}/accept/", self.doors).status_code, 200)
         for wrong in (self.doors, self.joinery):
-            self.assertEqual(self.post(f"{url}/collected/", wrong).data,
-                             {"detail": "Only the buyer can mark a pickup as collected."})
+            response = self.post(f"{url}/collected/", wrong)
+            self.assertEqual((response.status_code, response.data),
+                             (403, {"detail": "Only the buyer can mark a pickup as collected."}))
         self.assertEqual(self.post(f"{url}/collected/", moto).status_code, 200)
         self.assertEqual(self.need_page(need.id, self.joinery).status_code, 404, "only the buyer opens a need")
 
@@ -321,14 +331,14 @@ class Api(Fixtures, APITestCase):
         self.assertEqual(asked.status_code, 201, asked.data)
         self.assertIsNone(asked.data["pickup"]["other_phone"])
         self.assertNotIn("0711000111", self.need_page(need_id, moto).content.decode())
-        dashboard = self.client.get(f"/api/businesses/{self.bedmakers.id}/")
+        dashboard = self.get("/api/me/", self.bedmakers)
         self.assertEqual(len(dashboard.data["waiting_for_answer"]), 1)
         self.assertNotIn("0722600100", dashboard.content.decode())
 
         accepted = self.post(f"/api/pickups/{asked.data['pickup']['id']}/accept/", self.bedmakers)
         self.assertIn("0722600100", accepted.data["message"])
         self.assertIn("0711000111", self.need_page(need_id, moto).content.decode(), "the buyer now sees the seller")
-        dashboard = self.client.get(f"/api/businesses/{self.bedmakers.id}/").data
+        dashboard = self.get("/api/me/", self.bedmakers).data
         self.assertEqual(dashboard["agreed_pickups"][0]["other_phone"], "0722600100", "and the seller the buyer")
 
     def test_impact_counts_only_collected_kilos(self):
@@ -353,6 +363,7 @@ class LoadBasics(TestCase):
         self.assertEqual((Area.objects.count(), Material.objects.count()), (20, 8))
 
 
+@mock.patch.dict(os.environ, {"DEMO_PASSWORD": "Demo-Pass-2026"})
 class SeedDemo(APITestCase):
     def setUp(self):
         call_command("load_basics", stdout=StringIO())
@@ -361,21 +372,146 @@ class SeedDemo(APITestCase):
         call_command("seed_demo", stdout=StringIO())
         call_command("seed_demo", stdout=StringIO())
         self.assertEqual(Business.objects.count(), 12)
+        self.assertEqual(User.objects.count(), 12)
+        self.assertTrue(User.objects.get(username="moto").check_password("Demo-Pass-2026"))
         self.assertEqual(len(self.client.get("/api/listings/").data), 9)
         self.assertEqual(self.client.get("/api/impact/").data["total_kg"], 1215)
 
     def test_demo_need_finds_the_five_carpenters(self):
         call_command("seed_demo", stdout=StringIO())
-        moto = Business.objects.get(name="Moto Briquettes")
+        self.client.force_authenticate(user=User.objects.get(username="moto"))
         sawdust = Material.objects.get(name="Sawdust")
-        response = self.client.post("/api/needs/", {"business": moto.id, "material": sawdust.id, "kg": 1200,
-                                                    "max_km": 10, "needed_by": timezone.localdate().isoformat()})
-        page = self.client.get(f"/api/needs/{response.data['id']}/?business={moto.id}").data
+        response = self.client.post("/api/needs/", {"material": sawdust.id, "kg": 1200, "max_km": 10,
+                                                    "needed_by": timezone.localdate().isoformat()})
+        page = self.client.get(f"/api/needs/{response.data['id']}/").data
         self.assertEqual(len(page["suggestions"]), 5)
         self.assertEqual(page["covered_kg"], 1070)
         self.assertNotIn("Kawangware Timber Yard", [row["seller"] for row in page["suggestions"]])
+
+    def test_needs_demo_password(self):
+        with mock.patch.dict(os.environ, {"DEMO_PASSWORD": ""}):
+            with self.assertRaisesMessage(CommandError, "Set DEMO_PASSWORD in .env first."):
+                call_command("seed_demo", stdout=StringIO())
 
     def test_needs_load_basics_first(self):
         Area.objects.all().delete()
         with self.assertRaisesMessage(CommandError, "Run python manage.py load_basics first."):
             call_command("seed_demo", stdout=StringIO())
+
+
+class AuthTests(APITestCase):
+    """How the React app logs in: register or log in, send the Bearer token, refresh it, log out."""
+
+    def setUp(self):
+        self.kariobangi = Area.objects.create(name="Kariobangi", latitude=-1.2619, longitude=36.8808)
+        self.sawdust = Material.objects.create(name="Sawdust", kg_per_sack=12)
+        self.signup = {"username": "moto", "password": "Briquettes-2026", "name": "Moto Briquettes",
+                       "kind": "briquette maker", "area": self.kariobangi.id, "phone": "0722600100"}
+
+    def register(self, **changes):
+        return self.client.post("/api/auth/register/", {**self.signup, **changes}, format="json")
+
+    def login(self, username="moto", password="Briquettes-2026"):
+        return self.client.post("/api/auth/login/", {"username": username, "password": password}, format="json")
+
+    def bearer(self, access):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+
+    def test_register_returns_tokens_and_stores_a_hashed_password(self):
+        response = self.register()
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(set(response.data), {"access", "refresh", "business"})
+        self.assertEqual(response.data["business"]["name"], "Moto Briquettes")
+        self.assertNotIn("Briquettes-2026", response.content.decode())
+        user = User.objects.get(username="moto")
+        self.assertNotEqual(user.password, "Briquettes-2026")
+        self.assertTrue(user.check_password("Briquettes-2026"))
+        self.assertEqual(user.business.area, self.kariobangi)
+        self.assertEqual(self.register().status_code, 400, "username taken")
+        weak = self.register(username="other", password="123")
+        self.assertEqual(weak.status_code, 400)
+        self.assertIn("password", weak.data)
+
+    def test_login_returns_tokens_and_business_and_rejects_a_wrong_password(self):
+        self.register()
+        response = self.login()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(set(response.data), {"access", "refresh", "business"})
+        self.assertEqual(response.data["business"]["name"], "Moto Briquettes")
+        self.assertEqual(self.login(password="wrong-password").status_code, 401)
+
+    def test_protected_endpoint_needs_a_bearer_token(self):
+        self.register()
+        self.assertEqual(self.client.get("/api/me/").status_code, 401)
+        self.bearer(self.login().data["access"])
+        response = self.client.get("/api/me/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["business"]["name"], "Moto Briquettes")
+        self.bearer("not-a-real-token")
+        response = self.client.get("/api/me/")
+        self.assertEqual((response.status_code, response.data["code"]), (401, "token_not_valid"))
+
+    def test_refresh_rotates_and_rejects_the_old_refresh_token(self):
+        self.register()
+        old = self.login().data["refresh"]
+        response = self.client.post("/api/auth/refresh/", {"refresh": old}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(set(response.data), {"access", "refresh"})
+        new = response.data["refresh"]
+        self.assertNotEqual(new, old)
+        self.assertEqual(self.client.post("/api/auth/refresh/", {"refresh": old}, format="json").status_code, 401,
+                         "the old refresh token was blacklisted when it rotated")
+        self.assertEqual(self.client.post("/api/auth/refresh/", {"refresh": new}, format="json").status_code, 200)
+
+    def test_logout_blacklists_the_refresh_token(self):
+        self.register()
+        refresh = self.login().data["refresh"]
+        self.assertEqual(self.client.post("/api/auth/logout/", {"refresh": refresh}, format="json").status_code, 200)
+        self.assertEqual(self.client.post("/api/auth/refresh/", {"refresh": refresh}, format="json").status_code, 401)
+
+    @override_settings(CORS_ALLOWED_ORIGINS=["http://localhost:5173"])
+    def test_cors_allows_only_the_react_app(self):
+        preflight = {"HTTP_ACCESS_CONTROL_REQUEST_METHOD": "GET",
+                     "HTTP_ACCESS_CONTROL_REQUEST_HEADERS": "authorization"}
+        allowed = self.client.options("/api/me/", HTTP_ORIGIN="http://localhost:5173", **preflight)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(allowed.headers["Access-Control-Allow-Origin"], "http://localhost:5173")
+        other = self.client.options("/api/me/", HTTP_ORIGIN="https://other-site.example", **preflight)
+        self.assertNotIn("Access-Control-Allow-Origin", other.headers)
+
+    def test_wrong_business_gets_403(self):
+        buyer = self.register().data
+        seller = self.register(username="doors", name="Kariobangi Doors", kind="carpenter").data
+        listing = Listing.objects.create(business_id=seller["business"]["id"], material=self.sawdust,
+                                         quantity=220, available_until=timezone.localdate())
+        need = Need.objects.create(business_id=buyer["business"]["id"], material=self.sawdust, kg=100,
+                                   needed_by=timezone.localdate())
+        pickup = s.ask_for_pickup(need, listing, 100, need.business)
+        self.bearer(buyer["access"])
+        response = self.client.post(f"/api/pickups/{pickup.id}/accept/")
+        self.assertEqual((response.status_code, response.data), (403, {"detail": "Only the seller can accept."}))
+        self.bearer(seller["access"])
+        self.assertEqual(self.client.post(f"/api/pickups/{pickup.id}/accept/").status_code, 200)
+
+    def test_a_login_without_a_business_gets_403(self):
+        self.client.force_authenticate(user=User.objects.create_user("admin", password="x-Pass-2026"))
+        response = self.client.get("/api/me/")
+        self.assertEqual((response.status_code, response.data["detail"]), (403, "This account has no business profile."))
+
+    def test_delete_account_unless_something_was_agreed(self):
+        buyer = self.register().data
+        seller = self.register(username="doors", name="Kariobangi Doors", kind="carpenter").data
+        listing = Listing.objects.create(business_id=seller["business"]["id"], material=self.sawdust,
+                                         quantity=220, available_until=timezone.localdate())
+        need = Need.objects.create(business_id=buyer["business"]["id"], material=self.sawdust, kg=100,
+                                   needed_by=timezone.localdate())
+        s.accept(s.ask_for_pickup(need, listing, 100, need.business), listing.business)
+        self.bearer(seller["access"])
+        response = self.client.delete("/api/me/")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["detail"], "You have agreed or collected pickups, so this account can't be deleted.")
+        Pickup.objects.update(status=Pickup.CANCELLED)
+        self.assertEqual(self.client.delete("/api/me/").status_code, 204)
+        self.assertFalse(User.objects.filter(username="doors").exists())
+        self.assertFalse(Business.objects.filter(name="Kariobangi Doors").exists())
+        self.assertFalse(Listing.objects.exists(), "the business's listings go with it")
