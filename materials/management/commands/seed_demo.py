@@ -1,6 +1,8 @@
-"""Demo businesses, listings and some finished pickups, for demo day. Run load_basics first."""
+"""Demo businesses (each with a login), listings and some finished pickups. Run load_basics first."""
+import os
 from datetime import timedelta
 
+from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
@@ -8,7 +10,7 @@ from django.utils import timezone
 from materials import services
 from materials.models import Area, Business, Listing, Material, Need, Pickup
 
-# key, business name, kind, area, phone. The key is only a short label used in the lists below.
+# username, business name, kind, area, phone. Every demo login uses DEMO_PASSWORD from .env.
 BUSINESSES = [
     ("doors", "Kariobangi Doors and Frames", "carpenter", "Kariobangi", "0712345001"),
     ("kamukunji", "Kamukunji Furniture Works", "carpenter", "Kamukunji", "0712345002"),
@@ -24,7 +26,7 @@ BUSINESSES = [
     ("bsf", "Ruaraka Insect Protein", "insect farm", "Ruaraka", "0722600400"),
 ]
 
-# key, material, quantity, unit, condition, price per unit, description
+# username, material, quantity, unit, condition, price per unit, description
 LISTINGS = [
     ("doors", "Sawdust", 220, "kg", "mixed", 0, "Mostly cypress. Bring your own sacks."),
     ("kamukunji", "Sawdust", 25, "sack", "sorted", 50, "Dry, no shavings. Collect after 4 pm."),
@@ -48,22 +50,26 @@ HISTORY = [
 
 
 class Command(BaseCommand):
-    help = "Rebuild the 12 demo businesses, their listings and past pickups. Nothing else is touched."
+    help = "Rebuild the 12 demo businesses and logins, their listings and past pickups. Nothing else is touched."
 
     @transaction.atomic
     def handle(self, *args, **options):
+        password = os.environ.get("DEMO_PASSWORD")
+        if not password:
+            raise CommandError("Set DEMO_PASSWORD in .env first. Every demo login uses it.")
         if not Area.objects.exists() or not Material.objects.exists():
             raise CommandError("Run python manage.py load_basics first.")
 
-        # Start fresh: deleting the demo businesses also deletes their listings, needs and pickups.
-        names = [row[1] for row in BUSINESSES]
-        Business.objects.filter(name__in=names).delete()
+        # Start fresh: deleting the demo businesses and logins also deletes their listings, needs and pickups.
+        Business.objects.filter(name__in=[row[1] for row in BUSINESSES]).delete()
+        User.objects.filter(username__in=[row[0] for row in BUSINESSES]).delete()
 
         today = timezone.localdate()
         business = {}
-        for key, name, kind, area, phone in BUSINESSES:
-            business[key] = Business.objects.create(name=name, kind=kind, area=Area.objects.get(name=area),
-                                                    phone=phone)
+        for username, name, kind, area, phone in BUSINESSES:
+            user = User.objects.create_user(username=username, password=password)
+            business[username] = Business.objects.create(user=user, name=name, kind=kind,
+                                                         area=Area.objects.get(name=area), phone=phone)
 
         # Past pickups sit on old, expired listings and closed needs, so they show on the impact
         # page and in the trust numbers without taking kilos from today's listings.
@@ -76,13 +82,13 @@ class Command(BaseCommand):
                                        closed=True, created_at=created)
             Pickup.objects.create(listing=old, need=need, kg=kg, status=Pickup.COLLECTED)
 
-        for key, material, quantity, unit, condition, price, description in LISTINGS:
-            Listing.objects.create(business=business[key], material=Material.objects.get(name=material),
+        for username, material, quantity, unit, condition, price, description in LISTINGS:
+            Listing.objects.create(business=business[username], material=Material.objects.get(name=material),
                                    quantity=quantity, unit=unit, condition=condition, price_per_unit=price,
                                    description=description, available_until=today + timedelta(days=7))
 
         self.stdout.write(f"{len(BUSINESSES)} businesses, {len(LISTINGS)} live listings and "
                           f"{services.impact()['total_kg']} kg of past pickups ready.")
-        ids = [f"{business[key].name} = {business[key].id}" for key in ("moto", "doors", "sofas", "timber")]
-        ids.append(f"Sawdust = {Material.objects.get(name='Sawdust').id}")
-        self.stdout.write(", ".join(ids))
+        self.stdout.write("Log in with DEMO_PASSWORD as: " + ", ".join(row[0] for row in BUSINESSES))
+        self.stdout.write("Buyer for the demo: moto. Sellers: doors, kamukunji, joinery, bedmakers, sofas "
+                          f"(timber is outside 10 km). Sawdust is material {Material.objects.get(name='Sawdust').id}.")
