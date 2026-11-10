@@ -169,6 +169,34 @@ def cancel(pickup, by):
     return pickup
 
 
+def change_pickup_kg(pickup, by, kg):
+    """The buyer changes how much they're asking for, while the seller hasn't answered yet."""
+    if by != pickup.buyer:
+        raise NotAllowed("Only the buyer can change this request.")
+    if pickup.status != Pickup.PENDING:
+        raise RuleError("Only waiting requests can be changed. Cancel it and ask again instead.")
+    if kg <= 0:
+        raise RuleError("Ask for at least 1 kg.")
+    if kg > kg_left(pickup.listing):
+        raise RuleError(f"Only {kg_left(pickup.listing)} kg is left on that listing.")
+    # This request's own kilos already count as "asked for", so add them back before comparing.
+    can_ask = kg_still_needed(pickup.need) + pickup.kg
+    if kg > can_ask:
+        raise RuleError(f"You only need {can_ask} kg from this seller.")
+    pickup.kg = kg
+    pickup.save()
+    return pickup
+
+
+def delete_pickup(pickup, by):
+    """The buyer takes back a request the seller hasn't answered. Agreed pickups are cancelled, never deleted."""
+    if by != pickup.buyer:
+        raise NotAllowed("Only the buyer can delete this request.")
+    if pickup.status != Pickup.PENDING:
+        raise RuleError("Only waiting requests can be deleted. Cancel an agreed pickup instead.")
+    pickup.delete()
+
+
 def mark_collected(pickup, by):
     """The buyer confirms they took the material. Only collected kilos count as reused."""
     if by != pickup.buyer:
@@ -205,6 +233,33 @@ def change_distance(need, max_km, by):
     return need
 
 
+def edit_need(need, by, changes):
+    """The buyer changes kg, distance, date or note, e.g. widening to 20 km when nobody nearby has enough.
+    `changes` holds only the fields that were sent, already checked by the serializer."""
+    if by != need.business:
+        raise NotAllowed("Only the buyer can edit this need.")
+    if need.closed:
+        raise RuleError("This need is closed.")
+    if "material" in changes and changes["material"] != need.material and need.pickups.exists():
+        raise RuleError("The material can't change once you've asked sellers for it.")
+    asked = _sum(need.pickups.filter(status__in=COUNTS_FOR_NEED))
+    if changes.get("kg", need.kg) < asked:
+        raise RuleError(f"You've already asked for {asked} kg, so the need can't be smaller than that.")
+    for field, value in changes.items():
+        setattr(need, field, value)
+    need.save()
+    return need
+
+
+def delete_need(need, by):
+    """Deleting removes the need and its unanswered requests. Anything agreed is a promise, so close instead."""
+    if by != need.business:
+        raise NotAllowed("Only the buyer can delete this need.")
+    if need.pickups.filter(status__in=HOLDS_KILOS).exists():
+        raise RuleError("Some of this need is agreed or collected. Close it instead.")
+    need.delete()
+
+
 def withdraw(listing, by):
     """The seller takes a listing down. Waiting requests are declined; agreed pickups stay."""
     if by != listing.business:
@@ -225,6 +280,35 @@ def list_again(listing, by, available_until, today=None):
         unit=listing.unit, condition=listing.condition, price_per_unit=listing.price_per_unit,
         available_until=available_until, description=listing.description,
     )
+
+
+def edit_listing(listing, by, changes):
+    """The seller corrects a listing. `changes` holds only the fields that were sent, already checked by the
+    serializer. Listing.save() works out kg again from quantity and unit."""
+    if by != listing.business:
+        raise NotAllowed("Only the seller can edit this listing.")
+    material = changes.get("material", listing.material)
+    if material != listing.material and listing.pickups.exists():
+        raise RuleError("The material can't change once buyers have asked for this listing.")
+    quantity = changes.get("quantity", listing.quantity)
+    unit = changes.get("unit", listing.unit)
+    new_kg = quantity * (material.kg_per_sack if unit == "sack" else 1)
+    promised = kg_promised(listing)
+    if new_kg < promised:
+        raise RuleError(f"{promised} kg is already promised to buyers, so the listing can't be smaller than that.")
+    for field, value in changes.items():
+        setattr(listing, field, value)
+    listing.save()
+    return listing
+
+
+def delete_listing(listing, by):
+    """Deleting removes the listing and its unanswered requests. Agreed kilos are a promise, so withdraw instead."""
+    if by != listing.business:
+        raise NotAllowed("Only the seller can delete this listing.")
+    if listing.pickups.filter(status__in=HOLDS_KILOS).exists():
+        raise RuleError("Some of this listing is agreed or collected. Withdraw it instead.")
+    listing.delete()
 
 
 def completed_pickups(business):
