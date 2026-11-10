@@ -213,6 +213,17 @@ These are real responses from the demo data.
 
 On page load, call `GET /api/me/` to know who's logged in. The React app's address must be in `CORS_ALLOWED_ORIGINS` (`http://localhost:5173` for Vite by default).
 
+## Postman
+
+[docs/ByProduct.postman_collection.json](docs/ByProduct.postman_collection.json) has every request, in the order the demo runs: log in, the demo story, then one folder per resource, then refresh and log out.
+
+1. Run `python manage.py seed_demo` for fresh demo data, then `python manage.py runserver`.
+2. In Postman: **Import** → choose the file.
+3. Open the collection → **Variables** → set `demo_password` to your `DEMO_PASSWORD`.
+4. Run the folders in order (or the whole collection with the **Runner**). The log-in requests save `{{moto_access}}`, `{{moto_refresh}}` and `{{doors_access}}`, which later requests send as `Authorization: Bearer {{moto_access}}`.
+
+Each request has tests that check its status and key values. Running the collection changes the data (it posts needs and collects kilos), so run `seed_demo` again before a demo.
+
 ## How the rules work
 
 All the business rules are in [materials/services.py](materials/services.py). Views only find the logged-in business, call one service function and turn its answer into JSON. When a rule says no, it raises `RuleError` (answered with 400) or `NotAllowed` when the wrong business is acting (403).
