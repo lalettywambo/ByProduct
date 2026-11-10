@@ -14,6 +14,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 from datetime import timedelta
 from pathlib import Path
 import os
+import sys
 import dj_database_url
 from dotenv import load_dotenv
 
@@ -93,6 +94,20 @@ DATABASES = {
         conn_health_checks=True,
     )
 }
+
+if 'test' in sys.argv:
+    # Real logins hash passwords slowly on purpose (about 5 s each on this laptop). Tests create many
+    # users, so they use a fast hash instead. This never applies to the running site.
+    PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+    # Tests run on a local SQLite file instead of Neon, which is far away and slow.
+    # Set TEST_ON_NEON=1 to run them on Postgres, where select_for_update really locks rows.
+    if not os.getenv('TEST_ON_NEON'):
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': BASE_DIR / 'test.sqlite3',
+            }
+        }
 
 
 # Password validation
