@@ -5,6 +5,8 @@ into URLs: list (GET /things/), create (POST /things/), retrieve (GET /things/{i
 partial_update (PATCH /things/{id}/), destroy (DELETE /things/{id}/), and each @action (an extra button
 such as POST /things/{id}/withdraw/).
 
+Response rule: CRUD endpoints return the resource itself. Action buttons return
+{"message": "...", "<resource>": {...}} so the React app can show the message and update its state.
 """
 from datetime import timedelta
 
@@ -279,15 +281,9 @@ class PickupViewSet(viewsets.ModelViewSet):
         services.delete_pickup(self.get_object(), my_business(request))
         return Response(status=204)
 
-    def action_response(self, pickup, message):
-        """What every pickup button returns: the message to show, the pickup and the kilos it affects."""
-        business = my_business(self.request)
-        data = {"message": message, "pickup": self.get_serializer(pickup).data,
-                "listing_kg_left": services.kg_left(pickup.listing)}
-        # The need's progress is private to the buyer.
-        if business == pickup.buyer:
-            data["need_progress"] = services.progress(pickup.need)
-        return Response(data)
+    def answer(self, pickup, message):
+        """What every pickup button returns: the message to show and the pickup as it is now."""
+        return Response({"message": message, "pickup": self.get_serializer(pickup).data})
 
     @action(detail=True, methods=["post"])
     def accept(self, request, pk=None):
@@ -295,19 +291,19 @@ class PickupViewSet(viewsets.ModelViewSet):
         message = f"Agreed. Call {pickup.buyer} on {pickup.buyer.phone} to arrange the pickup."
         if declined:
             message += f" {declined} other request(s) no longer fit and were declined."
-        return self.action_response(pickup, message)
+        return self.answer(pickup, message)
 
     @action(detail=True, methods=["post"])
     def decline(self, request, pk=None):
         pickup = services.decline(self.get_object(), my_business(request))
-        return self.action_response(pickup, "Declined.")
+        return self.answer(pickup, "Declined.")
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
         pickup = services.cancel(self.get_object(), my_business(request))
-        return self.action_response(pickup, "Pickup cancelled. Those kilos are free again.")
+        return self.answer(pickup, "Pickup cancelled. Those kilos are free again.")
 
     @action(detail=True, methods=["post"])
     def collect(self, request, pk=None):
         pickup = services.mark_collected(self.get_object(), my_business(request))
-        return self.action_response(pickup, f"Marked as collected: {pickup.kg} kg reused.")
+        return self.answer(pickup, f"Marked as collected: {pickup.kg} kg reused.")
