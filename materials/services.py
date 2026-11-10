@@ -232,45 +232,6 @@ def close_need(need, by):
     return need.pickups.filter(status=Pickup.PENDING).update(status=Pickup.CANCELLED)
 
 
-def change_distance(need, max_km, by):
-    """The buyer widens or narrows the search, e.g. to 20 km when nobody nearby has enough."""
-    if by != need.business:
-        raise NotAllowed("Only the buyer can change this need.")
-    # max_km may arrive as text from a form, so compare as text against the allowed choices.
-    if str(max_km) not in [str(km) for km, label in Need.DISTANCES]:
-        raise RuleError("Pick 5, 10 or 20 km.")
-    need.max_km = int(max_km)
-    need.save()
-    return need
-
-
-def edit_need(need, by, changes):
-    """The buyer changes kg, distance, date or note, e.g. widening to 20 km when nobody nearby has enough.
-    `changes` holds only the fields that were sent, already checked by the serializer."""
-    if by != need.business:
-        raise NotAllowed("Only the buyer can edit this need.")
-    if need.closed:
-        raise RuleError("This need is closed.")
-    if "material" in changes and changes["material"] != need.material and need.pickups.exists():
-        raise RuleError("The material can't change once you've asked sellers for it.")
-    asked = _sum(need.pickups.filter(status__in=COUNTS_FOR_NEED))
-    if changes.get("kg", need.kg) < asked:
-        raise RuleError(f"You've already asked for {asked} kg, so the need can't be smaller than that.")
-    for field, value in changes.items():
-        setattr(need, field, value)
-    need.save()
-    return need
-
-
-def delete_need(need, by):
-    """Deleting removes the need and its unanswered requests. Anything agreed is a promise, so close instead."""
-    if by != need.business:
-        raise NotAllowed("Only the buyer can delete this need.")
-    if need.pickups.filter(status__in=HOLDS_KILOS).exists():
-        raise RuleError("Some of this need is agreed or collected. Close it instead.")
-    need.delete()
-
-
 def edit_need(need, by, changes):
     """The buyer changes kg, distance, date or note, e.g. widening to 20 km when nobody nearby has enough.
     `changes` holds only the fields that were sent, already checked by the serializer."""

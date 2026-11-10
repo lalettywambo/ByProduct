@@ -1,12 +1,17 @@
-"""API endpoints. Each view finds the logged-in business, calls one rule in services.py and returns JSON."""
+"""API endpoints. Each view finds the logged-in business, calls one rule in services.py and returns JSON.
+
+The ViewSets below each group every endpoint of one resource. The router in urls.py turns their methods
+into URLs: list (GET /things/), create (POST /things/), retrieve (GET /things/{id}/),
+partial_update (PATCH /things/{id}/), destroy (DELETE /things/{id}/), and each @action (an extra button
+such as POST /things/{id}/withdraw/).
+"""
 from datetime import timedelta
 
 from django.db.models import Q
-from django.http import Http404
-from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework import viewsets
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
@@ -15,8 +20,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from . import services
 from .models import Area, Business, Listing, Material, Need, Pickup
 from .serializers import (AreaSerializer, BusinessSerializer, ListingSerializer, MaterialSerializer,
-                          NeedSerializer, PickupSerializer, PublicBusinessSerializer, RegisterSerializer,
-                          SuggestionSerializer)
+                          NeedSerializer, PickupCreateSerializer, PickupKgSerializer, PickupSerializer,
+                          PublicBusinessSerializer, RegisterSerializer, SuggestionSerializer)
+
+# Only these HTTP methods exist; there's no PUT, so every edit is a PATCH of the fields that change.
+METHODS = ["get", "post", "patch", "delete"]
 
 
 def my_business(request):
@@ -25,12 +33,6 @@ def my_business(request):
     if business is None:
         raise PermissionDenied("This account has no business profile.")
     return business
-
-
-def rule_error(error):
-    """A rule in services.py said no. The wrong business acting is 403; anything else (state, amounts) is 400."""
-    status = 403 if isinstance(error, services.NotAllowed) else 400
-    return Response({"detail": str(error)}, status=status)
 
 
 def api_exception_handler(error, context):
@@ -66,10 +68,7 @@ def me(request):
         serializer.save()
         return Response(serializer.data)
     if request.method == "DELETE":
-        try:
-            services.delete_business(business, business)
-        except services.RuleError as error:
-            return rule_error(error)
+        services.delete_business(business, business)
         return Response(status=204)
 
     context = {"business": business}
@@ -88,170 +87,222 @@ def me(request):
     })
 
 
-# ---------- Basics ----------
-
-@api_view(["GET"])
-@permission_classes([AllowAny])
-def basics(request):
-    """Areas, materials and businesses for the React app's dropdowns. No phone numbers."""
-    return Response({
-        "areas": AreaSerializer(Area.objects.all(), many=True).data,
-        "materials": MaterialSerializer(Material.objects.all(), many=True).data,
-        "businesses": PublicBusinessSerializer(Business.objects.select_related("area"), many=True).data,
-    })
-
-
-# ---------- Listings (sellers) ----------
-
-@api_view(["GET", "POST"])
-@permission_classes([IsAuthenticatedOrReadOnly])
-def listings(request):
-    """GET: browse live listings, optionally ?material=<id>&area=<id>. POST: list leftovers."""
-    if request.method == "POST":
-        business = my_business(request)
-        serializer = ListingSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save(business=business)
-        return Response(serializer.data, status=201)
-
-    today = timezone.localdate()
-    found = (Listing.objects.filter(withdrawn=False, available_until__gte=today)
-             .select_related("business__area", "material"))
-    material = request.query_params.get("material", "")
-    area = request.query_params.get("area", "")
-    # Ignore filter values that aren't ids instead of failing the whole request.
-    if material.isdigit():
-        found = found.filter(material_id=material)
-    if area.isdigit():
-        found = found.filter(business__area_id=area)
-    # A fully promised listing isn't live, but kg_left is calculated, so that check happens in Python.
-    live = [listing for listing in found if services.kg_left(listing) > 0]
-    return Response(ListingSerializer(live, many=True).data)
-
-
-@api_view(["POST"])
-def listing_action(request, pk, action):
-    """withdraw | again. services.py checks that the logged-in business is the seller."""
-    if action not in ("withdraw", "again"):
-        raise Http404("Unknown action.")
-    listing = get_object_or_404(Listing, pk=pk)
-    business = my_business(request)
-    try:
-        if action == "withdraw":
-            declined = services.withdraw(listing, business)
-            return Response({"message": f"Listing withdrawn. {declined} waiting request(s) were declined.",
-                             "listing": ListingSerializer(listing).data})
-        until = timezone.localdate() + timedelta(days=7)
-        new_listing = services.list_again(listing, business, until)
-        return Response({"message": f"Listed again until {until:%d %b}.",
-                         "listing": ListingSerializer(new_listing).data}, status=201)
-    except services.RuleError as error:
-        return rule_error(error)
-
-
-# ---------- Needs (buyers) ----------
-
-@api_view(["POST"])
-def need_create(request):
-    business = my_business(request)
-    serializer = NeedSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    serializer.save(business=business)
-    return Response(serializer.data, status=201)
-
-
-@api_view(["GET"])
-def need_detail(request, pk):
-    """Progress, suggested sellers and pickup requests in one response, for the buyer only."""
-    business = my_business(request)
-    # Anyone but the buyer who posted the need gets "not found".
-    need = get_object_or_404(Need.objects.select_related("material", "business__area"), pk=pk, business=business)
-    result = {"suggestions": [], "covered_kg": 0} if need.closed else services.plan(need)
-    pickups = need.pickups.select_related("listing__business", "listing__material", "need__business")
-    data = NeedSerializer(need).data
-    data["suggestions"] = SuggestionSerializer(result["suggestions"], many=True).data
-    data["covered_kg"] = result["covered_kg"]
-    data["pickups"] = PickupSerializer(pickups, many=True, context={"business": business}).data
-    return Response(data)
-
-
-@api_view(["POST"])
-def need_action(request, pk, action):
-    """ask | ask-all | distance | close. services.py checks that the logged-in business is the buyer."""
-    if action not in ("ask", "ask-all", "distance", "close"):
-        raise Http404("Unknown action.")
-    need = get_object_or_404(Need, pk=pk)
-    business = my_business(request)
-    try:
-        if action == "ask":
-            listing_id = request.data.get("listing", "")
-            kg = request.data.get("kg", "")
-            if not str(listing_id).isdigit():
-                raise ValidationError({"listing": "Say which listing to ask."})
-            if not str(kg).isdigit():
-                raise ValidationError({"kg": "Enter the kilos as a whole number."})
-            listing = get_object_or_404(Listing, pk=listing_id)
-            pickup = services.ask_for_pickup(need, listing, int(kg), business)
-            return Response({"message": f"Asked {listing.business} for {pickup.kg} kg.",
-                             "pickup": PickupSerializer(pickup, context={"business": business}).data}, status=201)
-        if action == "ask-all":
-            pickups = services.ask_all(need, business)
-            total = sum(pickup.kg for pickup in pickups)
-            return Response({"message": f"Asked the suggested sellers for {total} kg in total.",
-                             "pickups": PickupSerializer(pickups, many=True, context={"business": business}).data},
-                            status=201)
-        if action == "distance":
-            services.change_distance(need, request.data.get("max_km", ""), business)
-            return Response({"message": f"Showing sellers within {need.max_km} km.",
-                             "need": NeedSerializer(need).data})
-        cancelled = services.close_need(need, business)
-        return Response({"message": f"Need closed. {cancelled} unanswered request(s) were cancelled.",
-                         "need": NeedSerializer(need).data})
-    except services.RuleError as error:
-        return rule_error(error)
-
-
-# ---------- Pickups (both sides) ----------
-
-@api_view(["POST"])
-def pickup_action(request, pk, action):
-    """accept / decline (seller), cancel (either side), collected (buyer). services.py decides who may."""
-    if action not in ("accept", "decline", "cancel", "collected"):
-        raise Http404("Unknown action.")
-    pickup = get_object_or_404(Pickup.objects.select_related("need__business", "listing__business"), pk=pk)
-    business = my_business(request)
-    try:
-        if action == "accept":
-            pickup, declined = services.accept(pickup, business)
-            message = f"Agreed. Call {pickup.buyer} on {pickup.buyer.phone} to arrange the pickup."
-            if declined:
-                message += f" {declined} other request(s) no longer fit and were declined."
-        elif action == "decline":
-            services.decline(pickup, business)
-            message = "Declined."
-        elif action == "cancel":
-            services.cancel(pickup, business)
-            message = "Pickup cancelled. Those kilos are free again."
-        else:
-            services.mark_collected(pickup, business)
-            message = f"Marked as collected: {pickup.kg} kg reused."
-    except services.RuleError as error:
-        return rule_error(error)
-
-    data = {
-        "message": message,
-        "pickup": PickupSerializer(pickup, context={"business": business}).data,
-        "listing_kg_left": services.kg_left(pickup.listing),
-    }
-    # The need's progress is private to the buyer.
-    if business == pickup.buyer:
-        data["need_progress"] = services.progress(pickup.need)
-    return Response(data)
-
-
-# ---------- Impact ----------
-
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def impact(request):
     return Response(services.impact())
+
+
+# ---------- Reference lists (public, read-only) ----------
+
+class AreaViewSet(viewsets.ReadOnlyModelViewSet):
+    """GET areas/ and areas/{id}/. ReadOnlyModelViewSet gives only list and retrieve."""
+    queryset = Area.objects.all()
+    serializer_class = AreaSerializer
+    permission_classes = [AllowAny]
+
+
+class MaterialViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Material.objects.all()
+    serializer_class = MaterialSerializer
+    permission_classes = [AllowAny]
+
+
+class BusinessViewSet(viewsets.ReadOnlyModelViewSet):
+    """Public profiles: name, kind, area and completed pickups. Never a phone number."""
+    queryset = Business.objects.select_related("area")
+    serializer_class = PublicBusinessSerializer
+    permission_classes = [AllowAny]
+
+
+# ---------- Listings (sellers) ----------
+
+class ListingViewSet(viewsets.ModelViewSet):
+    """Anyone can browse; a logged-in business lists leftovers; only the seller can change one."""
+    serializer_class = ListingSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    http_method_names = METHODS
+
+    def get_queryset(self):
+        """Which listings this request can see. Browsing shows live ones only; one listing by id can be any."""
+        if self.action != "list":
+            return Listing.objects.select_related("business__area", "material")
+        listings = services.live_listings().select_related("business__area", "material")
+        material = self.request.query_params.get("material", "")
+        area = self.request.query_params.get("area", "")
+        # Ignore filter values that aren't ids instead of failing the whole request.
+        if material.isdigit():
+            listings = listings.filter(material_id=material)
+        if area.isdigit():
+            listings = listings.filter(business__area_id=area)
+        return listings
+
+    def perform_create(self, serializer):
+        """POST listings/: the logged-in business becomes the seller."""
+        serializer.save(business=my_business(self.request))
+
+    def partial_update(self, request, *args, **kwargs):
+        """PATCH listings/{id}/: the serializer checks each field, services.edit_listing checks the rules."""
+        listing = self.get_object()
+        serializer = self.get_serializer(listing, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        services.edit_listing(listing, my_business(request), serializer.validated_data)
+        return Response(self.get_serializer(listing).data)
+
+    def destroy(self, request, *args, **kwargs):
+        """DELETE listings/{id}/."""
+        services.delete_listing(self.get_object(), my_business(request))
+        return Response(status=204)
+
+    @action(detail=True, methods=["post"])
+    def withdraw(self, request, pk=None):
+        listing = self.get_object()
+        declined = services.withdraw(listing, my_business(request))
+        return Response({"message": f"Listing withdrawn. {declined} waiting request(s) were declined.",
+                         "listing": self.get_serializer(listing).data})
+
+    @action(detail=True, methods=["post"])
+    def relist(self, request, pk=None):
+        until = timezone.localdate() + timedelta(days=7)
+        new_listing = services.list_again(self.get_object(), my_business(request), until)
+        return Response({"message": f"Listed again until {until:%d %b}.",
+                         "listing": self.get_serializer(new_listing).data}, status=201)
+
+
+# ---------- Needs (buyers) ----------
+
+class NeedViewSet(viewsets.ModelViewSet):
+    """A buyer's needs. Only the buyer who posted a need can see it; for anyone else it doesn't exist."""
+    serializer_class = NeedSerializer
+    http_method_names = METHODS
+
+    def get_queryset(self):
+        return Need.objects.filter(business=my_business(self.request)).select_related("material", "business__area")
+
+    def perform_create(self, serializer):
+        serializer.save(business=my_business(self.request))
+
+    def retrieve(self, request, *args, **kwargs):
+        """GET needs/{id}/: the need, its progress and its pickup requests."""
+        need = self.get_object()
+        pickups = need.pickups.select_related("listing__business", "listing__material", "need__business")
+        data = self.get_serializer(need).data
+        data["pickups"] = PickupSerializer(pickups, many=True, context={"business": need.business}).data
+        return Response(data)
+
+    def partial_update(self, request, *args, **kwargs):
+        """PATCH needs/{id}/: kg, max_km, needed_by or note. Changing max_km is how the buyer widens the search."""
+        need = self.get_object()
+        serializer = self.get_serializer(need, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        services.edit_need(need, my_business(request), serializer.validated_data)
+        return Response(self.get_serializer(need).data)
+
+    def destroy(self, request, *args, **kwargs):
+        services.delete_need(self.get_object(), my_business(request))
+        return Response(status=204)
+
+    @action(detail=True, methods=["get"])
+    def suggestions(self, request, pk=None):
+        """Which sellers to ask and how much, nearest first."""
+        need = self.get_object()
+        result = {"suggestions": [], "covered_kg": 0} if need.closed else services.plan(need)
+        return Response({
+            "need": self.get_serializer(need).data,
+            "still_needed": services.kg_still_needed(need),
+            "covered_kg": result["covered_kg"],
+            "suggestions": SuggestionSerializer(result["suggestions"], many=True).data,
+        })
+
+    @action(detail=True, methods=["post"], url_path="ask-all")
+    def ask_all(self, request, pk=None):
+        business = my_business(request)
+        pickups = services.ask_all(self.get_object(), business)
+        total = sum(pickup.kg for pickup in pickups)
+        return Response({"message": f"Asked the suggested sellers for {total} kg in total.",
+                         "pickups": PickupSerializer(pickups, many=True, context={"business": business}).data},
+                        status=201)
+
+    @action(detail=True, methods=["post"])
+    def close(self, request, pk=None):
+        need = self.get_object()
+        cancelled = services.close_need(need, my_business(request))
+        return Response({"message": f"Need closed. {cancelled} unanswered request(s) were cancelled.",
+                         "need": self.get_serializer(need).data})
+
+
+# ---------- Pickups (both sides) ----------
+
+class PickupViewSet(viewsets.ModelViewSet):
+    """Pickup requests where the logged-in business is the buyer or the seller. Anyone else gets 404."""
+    serializer_class = PickupSerializer
+    http_method_names = METHODS
+
+    def get_queryset(self):
+        business = my_business(self.request)
+        pickups = (Pickup.objects.filter(Q(need__business=business) | Q(listing__business=business))
+                   .select_related("need__business", "listing__business", "listing__material"))
+        status = self.request.query_params.get("status")
+        if self.action == "list" and status:
+            pickups = pickups.filter(status=status)
+        return pickups
+
+    def get_serializer_context(self):
+        # Tells PickupSerializer who is looking, so it shows the *other* side's phone once agreed.
+        context = super().get_serializer_context()
+        user = self.request.user
+        context["business"] = Business.objects.filter(user=user).first() if user.is_authenticated else None
+        return context
+
+    def create(self, request, *args, **kwargs):
+        """POST pickups/ {need, listing, kg}: the buyer asks one seller."""
+        serializer = PickupCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        pickup = services.ask_for_pickup(data["need"], data["listing"], data["kg"], my_business(request))
+        return Response(self.get_serializer(pickup).data, status=201)
+
+    def partial_update(self, request, *args, **kwargs):
+        """PATCH pickups/{id}/ {kg}: only the amount, only while the seller hasn't answered."""
+        pickup = self.get_object()
+        serializer = PickupKgSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.change_pickup_kg(pickup, my_business(request), serializer.validated_data["kg"])
+        return Response(self.get_serializer(pickup).data)
+
+    def destroy(self, request, *args, **kwargs):
+        services.delete_pickup(self.get_object(), my_business(request))
+        return Response(status=204)
+
+    def action_response(self, pickup, message):
+        """What every pickup button returns: the message to show, the pickup and the kilos it affects."""
+        business = my_business(self.request)
+        data = {"message": message, "pickup": self.get_serializer(pickup).data,
+                "listing_kg_left": services.kg_left(pickup.listing)}
+        # The need's progress is private to the buyer.
+        if business == pickup.buyer:
+            data["need_progress"] = services.progress(pickup.need)
+        return Response(data)
+
+    @action(detail=True, methods=["post"])
+    def accept(self, request, pk=None):
+        pickup, declined = services.accept(self.get_object(), my_business(request))
+        message = f"Agreed. Call {pickup.buyer} on {pickup.buyer.phone} to arrange the pickup."
+        if declined:
+            message += f" {declined} other request(s) no longer fit and were declined."
+        return self.action_response(pickup, message)
+
+    @action(detail=True, methods=["post"])
+    def decline(self, request, pk=None):
+        pickup = services.decline(self.get_object(), my_business(request))
+        return self.action_response(pickup, "Declined.")
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        pickup = services.cancel(self.get_object(), my_business(request))
+        return self.action_response(pickup, "Pickup cancelled. Those kilos are free again.")
+
+    @action(detail=True, methods=["post"])
+    def collect(self, request, pk=None):
+        pickup = services.mark_collected(self.get_object(), my_business(request))
+        return self.action_response(pickup, f"Marked as collected: {pickup.kg} kg reused.")
