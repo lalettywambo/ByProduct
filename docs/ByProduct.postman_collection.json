@@ -1,0 +1,2044 @@
+{
+  "info": {
+    "name": "ByProduct API",
+    "description": "Every ByProduct endpoint, in the order the demo runs.\n\nBefore you start:\n1. python manage.py seed_demo (fresh demo data: the demo story expects it).\n2. python manage.py runserver\n3. Set the collection variable demo_password to your DEMO_PASSWORD.\n4. Run the folders in order (Collection Runner, or one by one). The log-in requests save {{moto_access}}, {{moto_refresh}} and {{doors_access}} for the rest.\n\nRunning it changes the data (needs, pickups, kilos reused). Run seed_demo again to start fresh.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000/api"
+    },
+    {
+      "key": "demo_password",
+      "value": ""
+    },
+    {
+      "key": "needed_by",
+      "value": "2026-12-31"
+    },
+    {
+      "key": "sawdust_id",
+      "value": "1"
+    },
+    {
+      "key": "cotton_id",
+      "value": "3"
+    },
+    {
+      "key": "kariobangi_id",
+      "value": "9"
+    },
+    {
+      "key": "ngara_id",
+      "value": "17"
+    },
+    {
+      "key": "moto_access",
+      "value": ""
+    },
+    {
+      "key": "moto_refresh",
+      "value": ""
+    },
+    {
+      "key": "doors_access",
+      "value": ""
+    },
+    {
+      "key": "doors_business_id",
+      "value": ""
+    },
+    {
+      "key": "sofas_access",
+      "value": ""
+    },
+    {
+      "key": "new_access",
+      "value": ""
+    },
+    {
+      "key": "story_need_id",
+      "value": ""
+    },
+    {
+      "key": "doors_pickup_id",
+      "value": ""
+    },
+    {
+      "key": "sofas_pickup_id",
+      "value": ""
+    },
+    {
+      "key": "sofas_listing_id",
+      "value": ""
+    },
+    {
+      "key": "new_listing_id",
+      "value": ""
+    },
+    {
+      "key": "relisted_id",
+      "value": ""
+    },
+    {
+      "key": "need_id",
+      "value": ""
+    },
+    {
+      "key": "pickup_need_id",
+      "value": ""
+    },
+    {
+      "key": "pickup_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Log in",
+      "description": "Log in as the demo businesses and keep their tokens. Run these first.",
+      "item": [
+        {
+          "name": "Log in as moto (buyer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"moto_access\", pm.response.json().access);",
+                  "pm.collectionVariables.set(\"moto_refresh\", pm.response.json().refresh);",
+                  "pm.test(\"business is Moto Briquettes\", () => pm.expect(pm.response.json().business.name).to.eql(\"Moto Briquettes\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/auth/login/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"moto\",\n  \"password\": \"{{demo_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Log in as doors (seller)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"doors_access\", pm.response.json().access);",
+                  "pm.collectionVariables.set(\"doors_business_id\", pm.response.json().business.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/auth/login/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"doors\",\n  \"password\": \"{{demo_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Log in as sofas (seller)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"sofas_access\", pm.response.json().access);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/auth/login/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"sofas\",\n  \"password\": \"{{demo_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Wrong password is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/auth/login/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"moto\",\n  \"password\": \"not-the-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Register a new business",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"new_access\", pm.response.json().access);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/auth/register/",
+            "description": "Makes a throwaway account; '3. Me' deletes it again.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"workshop_{{$timestamp}}\",\n  \"password\": \"Strong-Pass-2026\",\n  \"name\": \"Test Workshop\",\n  \"kind\": \"carpenter\",\n  \"area\": {{kariobangi_id}},\n  \"phone\": \"0700111222\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Demo story",
+      "description": "The demo-day flow from the spec. Run on freshly seeded data (python manage.py seed_demo).",
+      "item": [
+        {
+          "name": "Moto posts 1,200 kg of sawdust within 10 km",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"story_need_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/needs/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"material\": {{sawdust_id}},\n  \"kg\": 1200,\n  \"max_km\": 10,\n  \"needed_by\": \"{{needed_by}}\",\n  \"note\": \"For Friday\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Suggestions: 5 sellers covering 1,070 kg",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"covers 1,070 kg\", () => pm.expect(pm.response.json().covered_kg).to.eql(1070));",
+                  "pm.test(\"5 sellers\", () => pm.expect(pm.response.json().suggestions.length).to.eql(5));",
+                  "pm.test(\"nearest is Kariobangi Doors and Frames\", () => pm.expect(pm.response.json().suggestions[0].seller.name).to.eql(\"Kariobangi Doors and Frames\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/needs/{{story_need_id}}/suggestions/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Ask all suggested sellers",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"doors_pickup_id\", pm.response.json().pickups[0].id);",
+                  "pm.collectionVariables.set(\"sofas_pickup_id\", pm.response.json().pickups[4].id);",
+                  "pm.test(\"5 pickup requests\", () => pm.expect(pm.response.json().pickups.length).to.eql(5));",
+                  "pm.test(\"the 5th is Ngara Sofa Makers\", () => pm.expect(pm.response.json().pickups[4].seller.name).to.eql(\"Ngara Sofa Makers\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/needs/{{story_need_id}}/ask-all/",
+            "description": ""
+          }
+        },
+        {
+          "name": "The buyer can't accept (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"explains why\", () => pm.expect(pm.response.json().detail).to.eql(\"Only the seller can accept.\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{doors_pickup_id}}/accept/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Doors accepts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"now agreed\", () => pm.expect(pm.response.json().pickup.status).to.eql(\"accepted\"));",
+                  "pm.test(\"doors sees moto's phone\", () => pm.expect(pm.response.json().pickup.other_phone).to.eql(\"0722600100\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{doors_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{doors_pickup_id}}/accept/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Sofas declines",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"now declined\", () => pm.expect(pm.response.json().pickup.status).to.eql(\"declined\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sofas_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{sofas_pickup_id}}/decline/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Widen the need to 20 km",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"20 km\", () => pm.expect(pm.response.json().max_km).to.eql(20));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/needs/{{story_need_id}}/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"max_km\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Suggestions again: Kawangware appears",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Kawangware Timber Yard\", () => pm.expect(pm.response.json().suggestions[0].seller.name).to.eql(\"Kawangware Timber Yard\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/needs/{{story_need_id}}/suggestions/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Moto collects from doors",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"collected\", () => pm.expect(pm.response.json().pickup.status).to.eql(\"collected\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{doors_pickup_id}}/collect/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Impact: 220 kg more reused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"1,215 + 220 kg\", () => pm.expect(pm.response.json().total_kg).to.eql(1435));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/impact/",
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Me",
+      "description": "Your own business: dashboard, edit, delete.",
+      "item": [
+        {
+          "name": "My dashboard",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"it's moto\", () => pm.expect(pm.response.json().business.name).to.eql(\"Moto Briquettes\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/me/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Edit my business",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"phone kept\", () => pm.expect(pm.response.json().phone).to.eql(\"0722600100\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/me/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"0722600100\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete my account (the new business)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{new_access}}"
+              }
+            ],
+            "url": "{{base_url}}/me/",
+            "description": ""
+          }
+        },
+        {
+          "name": "No token is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/me/",
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Reference (public)",
+      "description": "Areas, materials and public business profiles. No login needed.",
+      "item": [
+        {
+          "name": "Areas",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"20 areas\", () => pm.expect(pm.response.json().count).to.eql(20));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/areas/",
+            "description": ""
+          }
+        },
+        {
+          "name": "One area",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Kariobangi\", () => pm.expect(pm.response.json().name).to.eql(\"Kariobangi\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/areas/{{kariobangi_id}}/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Materials",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"8 materials\", () => pm.expect(pm.response.json().count).to.eql(8));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/materials/",
+            "description": ""
+          }
+        },
+        {
+          "name": "One material",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Sawdust\", () => pm.expect(pm.response.json().name).to.eql(\"Sawdust\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/materials/{{sawdust_id}}/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Businesses",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/businesses/",
+            "description": ""
+          }
+        },
+        {
+          "name": "One business (no phone)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Kariobangi Doors and Frames\", () => pm.expect(pm.response.json().name).to.eql(\"Kariobangi Doors and Frames\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/businesses/{{doors_business_id}}/",
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Listings",
+      "description": "Browse is public. Creating and changing a listing needs the seller's token.",
+      "item": [
+        {
+          "name": "Browse live listings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/listings/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Browse sawdust in Ngara",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"sofas_listing_id\", pm.response.json().results[0].id);",
+                  "pm.test(\"Ngara Sofa Makers\", () => pm.expect(pm.response.json().results[0].seller.name).to.eql(\"Ngara Sofa Makers\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/listings/?material={{sawdust_id}}&area={{ngara_id}}",
+            "description": ""
+          }
+        },
+        {
+          "name": "Doors lists 10 sacks of sawdust",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"new_listing_id\", pm.response.json().id);",
+                  "pm.test(\"10 sacks = 120 kg\", () => pm.expect(pm.response.json().kg).to.eql(120));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{doors_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/listings/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"material\": {{sawdust_id}},\n  \"quantity\": 10,\n  \"unit\": \"sack\",\n  \"condition\": \"mixed\",\n  \"price_per_unit\": 0,\n  \"available_until\": \"{{needed_by}}\",\n  \"description\": \"Fresh this week\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "One listing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"120 kg left\", () => pm.expect(pm.response.json().kg_left).to.eql(120));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/listings/{{new_listing_id}}/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Doors edits it to 12 sacks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"144 kg\", () => pm.expect(pm.response.json().kg).to.eql(144));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{doors_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/listings/{{new_listing_id}}/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 12\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Someone else can't edit it (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/listings/{{new_listing_id}}/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "A wrong unit is explained (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"clear message\", () => pm.expect(pm.response.json().unit[0]).to.eql(\"Unit must be \\\"kg\\\" or \\\"sack\\\".\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{doors_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/listings/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"material\": {{sawdust_id}},\n  \"quantity\": 5,\n  \"unit\": \"bag\",\n  \"available_until\": \"{{needed_by}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Withdraw it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"no longer live\", () => pm.expect(pm.response.json().listing.is_live).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{doors_access}}"
+              }
+            ],
+            "url": "{{base_url}}/listings/{{new_listing_id}}/withdraw/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Relist it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"relisted_id\", pm.response.json().listing.id);",
+                  "pm.test(\"live again\", () => pm.expect(pm.response.json().listing.is_live).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{doors_access}}"
+              }
+            ],
+            "url": "{{base_url}}/listings/{{new_listing_id}}/relist/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Delete the relisted copy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{doors_access}}"
+              }
+            ],
+            "url": "{{base_url}}/listings/{{relisted_id}}/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Delete the withdrawn one",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{doors_access}}"
+              }
+            ],
+            "url": "{{base_url}}/listings/{{new_listing_id}}/",
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Needs",
+      "description": "A buyer's own needs. Every request needs the buyer's token.",
+      "item": [
+        {
+          "name": "Post a need for cotton offcuts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"need_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/needs/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"material\": {{cotton_id}},\n  \"kg\": 30,\n  \"max_km\": 10,\n  \"needed_by\": \"{{needed_by}}\",\n  \"note\": \"Cotton only\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "A wrong distance is explained (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"clear message\", () => pm.expect(pm.response.json().max_km[0]).to.eql(\"Pick 5, 10 or 20 km.\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/needs/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"material\": {{cotton_id}},\n  \"kg\": 30,\n  \"max_km\": 7,\n  \"needed_by\": \"{{needed_by}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "My needs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/needs/",
+            "description": ""
+          }
+        },
+        {
+          "name": "One need with its progress and pickups",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"still needs 30 kg\", () => pm.expect(pm.response.json().progress.still_needed).to.eql(30));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/needs/{{need_id}}/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Edit the need",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"35 kg\", () => pm.expect(pm.response.json().kg).to.eql(35));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/needs/{{need_id}}/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kg\": 35,\n  \"note\": \"Cotton only, sorted by colour\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Suggestions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Amani Tailors\", () => pm.expect(pm.response.json().suggestions[0].seller.name).to.eql(\"Amani Tailors\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/needs/{{need_id}}/suggestions/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Ask all",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/needs/{{need_id}}/ask-all/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Close the need",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"closed\", () => pm.expect(pm.response.json().need.closed).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/needs/{{need_id}}/close/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Delete the need",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/needs/{{need_id}}/",
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Pickups",
+      "description": "Pickup requests. The buyer asks; the seller (sofas here) answers.",
+      "item": [
+        {
+          "name": "Post a need for 60 kg of sawdust",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"pickup_need_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/needs/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"material\": {{sawdust_id}},\n  \"kg\": 60,\n  \"max_km\": 10,\n  \"needed_by\": \"{{needed_by}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Ask Ngara Sofa Makers for 40 kg",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"pickup_id\", pm.response.json().id);",
+                  "pm.test(\"no phone yet\", () => pm.expect(pm.response.json().other_phone).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/pickups/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"need\": {{pickup_need_id}},\n  \"listing\": {{sofas_listing_id}},\n  \"kg\": 40\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "My pickups",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/",
+            "description": ""
+          }
+        },
+        {
+          "name": "My pickups waiting for an answer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/?status=pending",
+            "description": ""
+          }
+        },
+        {
+          "name": "One pickup",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{pickup_id}}/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Change it to 30 kg",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"30 kg\", () => pm.expect(pm.response.json().kg).to.eql(30));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{pickup_id}}/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kg\": 30\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The seller can't change it (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sofas_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{pickup_id}}/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kg\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Take the request back",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{pickup_id}}/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Ask again for 40 kg",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"pickup_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/pickups/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"need\": {{pickup_need_id}},\n  \"listing\": {{sofas_listing_id}},\n  \"kg\": 40\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Sofas accepts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"agreed\", () => pm.expect(pm.response.json().pickup.status).to.eql(\"accepted\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sofas_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{pickup_id}}/accept/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Sofas can't make it: cancel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"cancelled\", () => pm.expect(pm.response.json().pickup.status).to.eql(\"cancelled\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sofas_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{pickup_id}}/cancel/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Ask once more for 40 kg",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"pickup_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/pickups/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"need\": {{pickup_need_id}},\n  \"listing\": {{sofas_listing_id}},\n  \"kg\": 40\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Sofas accepts again",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sofas_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{pickup_id}}/accept/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Moto collects",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"collected\", () => pm.expect(pm.response.json().pickup.status).to.eql(\"collected\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{pickup_id}}/collect/",
+            "description": ""
+          }
+        },
+        {
+          "name": "Ask for the last 20 kg",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"pickup_id\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moto_access}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/pickups/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"need\": {{pickup_need_id}},\n  \"listing\": {{sofas_listing_id}},\n  \"kg\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Sofas declines",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"declined\", () => pm.expect(pm.response.json().pickup.status).to.eql(\"declined\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{sofas_access}}"
+              }
+            ],
+            "url": "{{base_url}}/pickups/{{pickup_id}}/decline/",
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Tokens",
+      "description": "Refresh and log out. Run last: logging out ends moto's refresh token.",
+      "item": [
+        {
+          "name": "Refresh moto's token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"moto_access\", pm.response.json().access);",
+                  "pm.collectionVariables.set(\"moto_refresh\", pm.response.json().refresh);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/auth/refresh/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh\": \"{{moto_refresh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Log out moto",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/auth/logout/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh\": \"{{moto_refresh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The logged-out refresh token no longer works",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/auth/refresh/",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh\": \"{{moto_refresh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
