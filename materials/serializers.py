@@ -151,11 +151,30 @@ class PickupSerializer(serializers.ModelSerializer):
         return None
 
 
+class PickupCreateSerializer(serializers.Serializer):
+    """Input for asking a seller. The amount rules (at least 1 kg, not more than is left) stay in services."""
+    need = serializers.PrimaryKeyRelatedField(queryset=Need.objects.all())
+    listing = serializers.PrimaryKeyRelatedField(queryset=Listing.objects.all())
+    kg = serializers.IntegerField()
+
+
+class PickupKgSerializer(serializers.Serializer):
+    """The only thing a buyer may PATCH on a pickup request."""
+    kg = serializers.IntegerField()
+
+
 class SuggestionSerializer(serializers.Serializer):
-    """One row of plan(): a seller to ask and how much to ask them for. Flat, and no phone."""
-    listing = serializers.IntegerField(source="listing.id")
-    seller = serializers.CharField(source="listing.business.name")
-    area = serializers.CharField(source="listing.business.area.name")
+    """One row of plan(): a seller to ask and how much to ask them for. No phone."""
+    listing = serializers.SerializerMethodField()
+    seller = serializers.SerializerMethodField()
     km = serializers.FloatField()
     kg_left = serializers.IntegerField()
     suggested_kg = serializers.IntegerField()
+
+    def get_listing(self, row):
+        listing = row["listing"]
+        return {"id": listing.id, "material": {"id": listing.material_id, "name": listing.material.name}}
+
+    def get_seller(self, row):
+        seller = row["listing"].business
+        return {"id": seller.id, "name": seller.name, "area": seller.area.name}
