@@ -115,7 +115,7 @@ class MaterialViewSet(viewsets.ReadOnlyModelViewSet):
 
 class BusinessViewSet(viewsets.ReadOnlyModelViewSet):
     """Public profiles: name, kind, area and completed pickups. Never a phone number."""
-    queryset = Business.objects.select_related("area")
+    queryset = Business.objects.select_related("area").order_by("name")   # a fixed order keeps pages stable
     serializer_class = PublicBusinessSerializer
     permission_classes = [AllowAny]
 

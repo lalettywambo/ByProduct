@@ -71,9 +71,12 @@ def live_listings(today=None):
     An annotation adds a calculated column to each row: here, the kilos already agreed or collected."""
     today = today or timezone.localdate()
     promised = Coalesce(Sum("pickups__kg", filter=Q(pickups__status__in=HOLDS_KILOS)), 0)
+    # Newest first. The order must be explicit: Django drops the model's default order in a grouped query,
+    # and pages without a fixed order can repeat or skip listings.
     return (Listing.objects.filter(withdrawn=False, available_until__gte=today)
             .annotate(promised_kg=promised)
-            .filter(kg__gt=F("promised_kg")))
+            .filter(kg__gt=F("promised_kg"))
+            .order_by("-created_at", "-id"))
 
 
 def find_matches(need, today=None):
