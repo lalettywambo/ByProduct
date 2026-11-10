@@ -299,8 +299,7 @@ class Api(ApiHelpers, APITestCase):
         self.assertEqual(found["suggestions"], [], "nobody else within 10 km, and Ngara isn't asked again")
 
         bad = self.patch(f"/api/needs/{need_id}/", moto, max_km=15)
-        self.assertEqual(bad.status_code, 400)
-        self.assertIn("max_km", bad.data)
+        self.assertEqual((bad.status_code, bad.data), (400, {"max_km": ["Pick 5, 10 or 20 km."]}))
         self.assertEqual(self.patch(f"/api/needs/{need_id}/", moto, max_km=20).status_code, 200)
         names = [row["seller"]["name"] for row in self.suggestions(need_id, moto)["suggestions"]]
         self.assertEqual(names, ["Kawangware Timber"], "a wider distance finds more")
@@ -525,7 +524,8 @@ class CrudTests(ApiHelpers, APITestCase):
         first = found["suggestions"][0]
         self.assertEqual(set(first), {"listing", "seller", "km", "kg_left", "suggested_kg"})
         self.assertEqual(first["listing"], {"id": self.l_doors.id, "material": {"id": self.sawdust.id, "name": "Sawdust"}})
-        self.assertEqual(first["seller"], {"id": self.doors.id, "name": "Kariobangi Doors", "area": "Kariobangi"})
+        self.assertEqual(first["seller"], {"id": self.doors.id, "name": "Kariobangi Doors",
+                                           "area": {"id": self.area["Kariobangi"].id, "name": "Kariobangi"}})
         self.assertEqual((first["km"], first["kg_left"], first["suggested_kg"]), (0.0, 220, 220))
 
     def test_pickup_create_edit_delete_and_cancel_rules(self):
@@ -551,7 +551,7 @@ class CrudTests(ApiHelpers, APITestCase):
         self.assertEqual(self.patch(url, moto, kg=0).data["detail"], "Ask for at least 1 kg.")
         self.assertEqual(self.patch(url, moto, kg=250).data["detail"], "Only 220 kg is left on that listing.")
         self.ask(moto, need_id, self.l_bed, 150)
-        self.assertEqual(self.patch(url, moto, kg=200).data["detail"], "You only need 150 kg from this seller.")
+        self.assertEqual(self.patch(url, moto, kg=200).data["detail"], "You can ask this seller for at most 150 kg.")
 
         response = self.post(f"{url}cancel/", self.doors)
         self.assertEqual((response.status_code, response.data["detail"]),
@@ -569,6 +569,122 @@ class CrudTests(ApiHelpers, APITestCase):
         bed_pickup = Pickup.objects.get(listing=self.l_bed)
         self.assertEqual(self.delete(f"/api/pickups/{bed_pickup.id}/", moto).status_code, 204)
         self.assertFalse(Pickup.objects.filter(pk=bed_pickup.pk).exists())
+
+
+def keys_anywhere(data):
+    """Every dictionary key in a JSON response, however deeply nested."""
+    if isinstance(data, dict):
+        return set(data) | set().union(*(keys_anywhere(value) for value in data.values()))
+    if isinstance(data, list):
+        return set().union(*(keys_anywhere(item) for item in data))
+    return set()
+
+
+class JsonShapeTests(ApiHelpers, APITestCase):
+    """Phase 3: the JSON the React app gets back is the documented shape, and never leaks a phone."""
+    AREA = {"id", "name"}
+    BUSINESS = {"id", "name", "area"}
+    LISTING = {"id", "seller", "material", "quantity", "unit", "kg", "kg_left", "condition", "price_per_unit",
+               "available_until", "description", "is_live", "created_at"}
+    NEED = {"id", "business", "material", "kg", "max_km", "needed_by", "note", "closed", "progress", "created_at"}
+    PICKUP = {"id", "status", "status_label", "kg", "listing", "buyer", "seller", "other_phone",
+              "created_at", "updated_at"}
+
+    def test_listings_and_public_profiles_never_include_a_phone(self):
+        self.carpenters()
+        self.doors.phone = "0711222333"
+        self.doors.save()
+        moto = self.biz("Moto Briquettes", "Kariobangi", kind="briquette maker")
+        # Even with an agreed pickup on the listing, its public views stay phone-free.
+        need = Need.objects.create(business=moto, material=self.sawdust, kg=100, needed_by=self.today)
+        s.accept(s.ask_for_pickup(need, self.l_doors, 100, moto), self.doors)
+        for url in ["/api/listings/", f"/api/listings/{self.l_doors.id}/",
+                    "/api/businesses/", f"/api/businesses/{self.doors.id}/"]:
+            for viewer in (None, moto, self.doors):
+                response = self.get(url, viewer)
+                self.assertEqual(response.status_code, 200, url)
+                self.assertNotIn("phone", keys_anywhere(response.data), url)
+                self.assertNotIn("other_phone", keys_anywhere(response.data), url)
+                self.assertNotIn("0711222333", response.content.decode(), url)
+
+    def test_listing_shape(self):
+        self.carpenters()
+        page = self.client.get("/api/listings/").data
+        self.assertEqual(set(page), {"count", "next", "previous", "results"})
+        listing = self.client.get(f"/api/listings/{self.l_kamukunji.id}/").data
+        self.assertEqual(set(listing), self.LISTING)
+        self.assertEqual(listing["seller"], {"id": self.kamukunji.id, "name": "Kamukunji Furniture Works",
+                                             "area": {"id": self.area["Kamukunji"].id, "name": "Kamukunji"}})
+        self.assertEqual(listing["material"], {"id": self.sawdust.id, "name": "Sawdust"})
+        self.assertEqual((listing["quantity"], listing["unit"], listing["kg"], listing["kg_left"], listing["is_live"]),
+                         (25, "sack", 300, 300, True))
+
+    def test_need_and_pickup_shapes(self):
+        self.carpenters()
+        moto = self.biz("Moto Briquettes", "Kariobangi", kind="briquette maker")
+        need_id = self.post_need(moto, 300)
+        created = self.get(f"/api/needs/{need_id}/", moto).data
+        self.assertEqual(set(created), self.NEED | {"pickups"})
+        self.assertEqual(set(created["business"]), self.BUSINESS)
+        self.assertEqual(set(created["business"]["area"]), self.AREA)
+        self.assertEqual(created["progress"], {"collected": 0, "agreed": 0, "waiting": 0, "still_needed": 300})
+        self.assertEqual(set(self.get("/api/needs/", moto).data["results"][0]), self.NEED)
+
+        pickup = self.ask(moto, need_id, self.l_doors, 200).data
+        self.assertEqual(set(pickup), self.PICKUP)
+        self.assertEqual(pickup["listing"], {"id": self.l_doors.id, "kg_left": 220,
+                                             "material": {"id": self.sawdust.id, "name": "Sawdust"}})
+        self.assertEqual((pickup["status"], pickup["status_label"], pickup["other_phone"]),
+                         ("pending", "Waiting for the seller", None))
+        self.assertEqual(set(pickup["buyer"]), self.BUSINESS)
+        self.assertEqual(set(self.get("/api/pickups/", moto).data), {"count", "next", "previous", "results"})
+        need_page = self.get(f"/api/needs/{need_id}/", moto).data
+        self.assertEqual([row["id"] for row in need_page["pickups"]], [pickup["id"]])
+        self.assertEqual(need_page["progress"]["waiting"], 200)
+
+    def test_action_responses_are_a_message_and_the_resource(self):
+        self.carpenters()
+        moto = self.biz("Moto Briquettes", "Kariobangi", kind="briquette maker")
+        need_id = self.post_need(moto, 1200)
+        asked = self.post(f"/api/needs/{need_id}/ask-all/", moto).data
+        self.assertEqual(set(asked), {"message", "pickups"})
+        self.assertEqual(len(asked["pickups"]), 5)
+
+        doors_pickup = next(row["id"] for row in asked["pickups"] if row["seller"]["id"] == self.doors.id)
+        sofas_pickup = next(row["id"] for row in asked["pickups"] if row["seller"]["id"] == self.sofas.id)
+        bed_pickup = next(row["id"] for row in asked["pickups"] if row["seller"]["id"] == self.bedmakers.id)
+        self.post(f"/api/pickups/{bed_pickup}/accept/", self.bedmakers)
+        accepted = self.post(f"/api/pickups/{doors_pickup}/accept/", self.doors).data
+        self.assertEqual(set(accepted), {"message", "pickup"})
+        self.assertEqual(accepted["pickup"]["listing"]["kg_left"], 0, "the agreed kilos are taken off")
+        self.assertEqual(set(self.post(f"/api/pickups/{sofas_pickup}/decline/", self.sofas).data), {"message", "pickup"})
+        self.assertEqual(set(self.post(f"/api/pickups/{doors_pickup}/collect/", moto).data), {"message", "pickup"})
+
+        withdrawn = self.post(f"/api/listings/{self.l_far.id}/withdraw/", self.far).data
+        self.assertEqual((set(withdrawn), set(withdrawn["listing"])), ({"message", "listing"}, self.LISTING))
+        relisted = self.post(f"/api/listings/{self.l_far.id}/relist/", self.far).data
+        self.assertEqual(set(relisted), {"message", "listing"})
+        closed = self.post(f"/api/needs/{need_id}/close/", moto).data
+        self.assertEqual((set(closed), closed["need"]["closed"]), ({"message", "need"}, True))
+        cancelled = self.post(f"/api/pickups/{bed_pickup}/cancel/", moto)
+        self.assertEqual((set(cancelled.data), cancelled.data["pickup"]["status"]), ({"message", "pickup"}, "cancelled"))
+
+    def test_choice_errors_are_clear(self):
+        self.carpenters()
+        moto = self.biz("Moto Briquettes", "Kariobangi", kind="briquette maker")
+        new = {"material": self.sawdust.id, "quantity": 5, "available_until": self.today.isoformat()}
+        self.assertEqual(self.post("/api/listings/", self.joinery, **new, unit="bag").data,
+                         {"unit": ['Unit must be "kg" or "sack".']})
+        self.assertEqual(self.post("/api/listings/", self.joinery, **new, condition="clean").data,
+                         {"condition": ['Condition must be "sorted" or "mixed".']})
+        need = {"material": self.sawdust.id, "kg": 100, "needed_by": self.today.isoformat()}
+        self.assertEqual(self.post("/api/needs/", moto, **need, max_km=7).data, {"max_km": ["Pick 5, 10 or 20 km."]})
+
+    def test_docs_are_public(self):
+        schema = self.client.get("/api/schema/")
+        self.assertEqual(schema.status_code, 200)
+        self.assertIn("ByProduct API", schema.content.decode())
+        self.assertEqual(self.client.get("/api/docs/").status_code, 200)
 
 
 class LoadBasics(TestCase):
