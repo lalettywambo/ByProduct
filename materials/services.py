@@ -2,7 +2,8 @@
 from math import asin, cos, radians, sin, sqrt
 
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import F, Q, Sum
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from .models import Listing, Need, Pickup
@@ -63,6 +64,16 @@ def progress(need):
 def is_live(listing, today=None):
     today = today or timezone.localdate()
     return not listing.withdrawn and listing.available_until >= today and kg_left(listing) > 0
+
+
+def live_listings(today=None):
+    """The same test as is_live(), but done by the database, so a page of 20 results can be counted and cut.
+    An annotation adds a calculated column to each row: here, the kilos already agreed or collected."""
+    today = today or timezone.localdate()
+    promised = Coalesce(Sum("pickups__kg", filter=Q(pickups__status__in=HOLDS_KILOS)), 0)
+    return (Listing.objects.filter(withdrawn=False, available_until__gte=today)
+            .annotate(promised_kg=promised)
+            .filter(kg__gt=F("promised_kg")))
 
 
 def find_matches(need, today=None):
@@ -231,6 +242,33 @@ def change_distance(need, max_km, by):
     need.max_km = int(max_km)
     need.save()
     return need
+
+
+def edit_need(need, by, changes):
+    """The buyer changes kg, distance, date or note, e.g. widening to 20 km when nobody nearby has enough.
+    `changes` holds only the fields that were sent, already checked by the serializer."""
+    if by != need.business:
+        raise NotAllowed("Only the buyer can edit this need.")
+    if need.closed:
+        raise RuleError("This need is closed.")
+    if "material" in changes and changes["material"] != need.material and need.pickups.exists():
+        raise RuleError("The material can't change once you've asked sellers for it.")
+    asked = _sum(need.pickups.filter(status__in=COUNTS_FOR_NEED))
+    if changes.get("kg", need.kg) < asked:
+        raise RuleError(f"You've already asked for {asked} kg, so the need can't be smaller than that.")
+    for field, value in changes.items():
+        setattr(need, field, value)
+    need.save()
+    return need
+
+
+def delete_need(need, by):
+    """Deleting removes the need and its unanswered requests. Anything agreed is a promise, so close instead."""
+    if by != need.business:
+        raise NotAllowed("Only the buyer can delete this need.")
+    if need.pickups.filter(status__in=HOLDS_KILOS).exists():
+        raise RuleError("Some of this need is agreed or collected. Close it instead.")
+    need.delete()
 
 
 def edit_need(need, by, changes):
