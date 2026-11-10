@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
+    'drf_spectacular',
     'materials',
 ]
 
@@ -168,6 +169,16 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
     # Turns a RuleError from services.py into 400, or 403 when the wrong business is acting.
     'EXCEPTION_HANDLER': 'materials.views.api_exception_handler',
+    # Builds the OpenAPI description behind /api/docs/ from the serializers and views.
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'ByProduct API',
+    'DESCRIPTION': "Nairobi businesses list leftovers, post what they need, and arrange pickups of each other's by-products.",
+    'VERSION': '1.0.0',
+    # Separate request and response shapes, so requests show ids and responses show nested objects.
+    'COMPONENT_SPLIT_REQUEST': True,
 }
 
 SIMPLE_JWT = {

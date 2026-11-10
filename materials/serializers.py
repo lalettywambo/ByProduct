@@ -9,6 +9,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
@@ -127,6 +128,13 @@ class LoginSerializer(TokenObtainPairSerializer):
         return data
 
 
+class TokensSerializer(serializers.Serializer):
+    """Docs only: what register and login return."""
+    access = serializers.CharField()
+    refresh = serializers.CharField()
+    business = BusinessSerializer()
+
+
 # ---------- Listings ----------
 
 class ListingSerializer(serializers.ModelSerializer):
@@ -231,6 +239,7 @@ class NeedSerializer(serializers.ModelSerializer):
         fields = ["id", "business", "material", "kg", "max_km", "needed_by", "note", "closed", "progress",
                   "created_at"]
 
+    @extend_schema_field(ProgressSerializer)
     def get_progress(self, need):
         return services.progress(need)
 
@@ -242,6 +251,7 @@ class NeedDetailSerializer(NeedSerializer):
     class Meta(NeedSerializer.Meta):
         fields = NeedSerializer.Meta.fields + ["pickups"]
 
+    @extend_schema_field(PickupSerializer(many=True))
     def get_pickups(self, need):
         pickups = need.pickups.select_related("listing__material", "need__business__area",
                                               "listing__business__area")
@@ -275,3 +285,53 @@ class SuggestionSerializer(serializers.Serializer):
     km = serializers.FloatField()
     kg_left = serializers.IntegerField()
     suggested_kg = serializers.IntegerField()
+
+
+# ---------- Response bodies for the docs (the views build these as plain dicts) ----------
+
+class SuggestionsResponseSerializer(serializers.Serializer):
+    need = NeedSerializer()
+    still_needed = serializers.IntegerField()
+    covered_kg = serializers.IntegerField()
+    suggestions = SuggestionSerializer(many=True)
+
+
+class ListingActionSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    listing = ListingSerializer()
+
+
+class NeedActionSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    need = NeedSerializer()
+
+
+class PickupActionSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    pickup = PickupSerializer()
+
+
+class AskAllSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    pickups = PickupSerializer(many=True)
+
+
+class MaterialImpactSerializer(serializers.Serializer):
+    material = serializers.CharField()
+    kg = serializers.IntegerField()
+    bar_percent = serializers.IntegerField()
+
+
+class ImpactSerializer(serializers.Serializer):
+    total_kg = serializers.IntegerField()
+    pickups = serializers.IntegerField()
+    by_material = MaterialImpactSerializer(many=True)
+
+
+class DashboardSerializer(serializers.Serializer):
+    business = BusinessSerializer()
+    completed_pickups = serializers.IntegerField()
+    listings = ListingSerializer(many=True)
+    open_needs = NeedSerializer(many=True)
+    waiting_for_answer = PickupSerializer(many=True)
+    agreed_pickups = PickupSerializer(many=True)
