@@ -4,6 +4,7 @@ The ViewSets below each group every endpoint of one resource. The router in urls
 into URLs: list (GET /things/), create (POST /things/), retrieve (GET /things/{id}/),
 partial_update (PATCH /things/{id}/), destroy (DELETE /things/{id}/), and each @action (an extra button
 such as POST /things/{id}/withdraw/).
+
 """
 from datetime import timedelta
 
@@ -19,7 +20,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import services
 from .models import Area, Business, Listing, Material, Need, Pickup
-from .serializers import (AreaSerializer, BusinessSerializer, ListingSerializer, MaterialSerializer,
+from .serializers import (AreaSerializer, BusinessInputSerializer, BusinessSerializer, ListingInputSerializer,
+                          ListingSerializer, MaterialSerializer, NeedDetailSerializer, NeedInputSerializer,
                           NeedSerializer, PickupCreateSerializer, PickupKgSerializer, PickupSerializer,
                           PublicBusinessSerializer, RegisterSerializer, SuggestionSerializer)
 
@@ -63,17 +65,17 @@ def me(request):
     """GET: my business and dashboard. PATCH: edit my business. DELETE: close my account."""
     business = my_business(request)
     if request.method == "PATCH":
-        serializer = BusinessSerializer(business, data=request.data, partial=True)
+        serializer = BusinessInputSerializer(business, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(serializer.data)
+        return Response(BusinessSerializer(business).data)
     if request.method == "DELETE":
         services.delete_business(business, business)
         return Response(status=204)
 
     context = {"business": business}
     involved = Q(listing__business=business) | Q(need__business=business)
-    pickups = Pickup.objects.select_related("need__business", "listing__business", "listing__material")
+    pickups = Pickup.objects.select_related("need__business__area", "listing__business__area", "listing__material")
     waiting = pickups.filter(listing__business=business, status=Pickup.PENDING)
     agreed = pickups.filter(involved, status=Pickup.ACCEPTED)
     return Response({
@@ -81,7 +83,8 @@ def me(request):
         "completed_pickups": services.completed_pickups(business),
         "listings": ListingSerializer(business.listings.select_related("material", "business__area"),
                                       many=True).data,
-        "open_needs": NeedSerializer(business.needs.filter(closed=False), many=True).data,
+        "open_needs": NeedSerializer(business.needs.filter(closed=False).select_related("material", "business__area"),
+                                     many=True).data,
         "waiting_for_answer": PickupSerializer(waiting, many=True, context=context).data,
         "agreed_pickups": PickupSerializer(agreed, many=True, context=context).data,
     })
@@ -137,17 +140,20 @@ class ListingViewSet(viewsets.ModelViewSet):
             listings = listings.filter(business__area_id=area)
         return listings
 
-    def perform_create(self, serializer):
-        """POST listings/: the logged-in business becomes the seller."""
-        serializer.save(business=my_business(self.request))
+    def create(self, request, *args, **kwargs):
+        """POST listings/: check the input, save it with the logged-in business as the seller."""
+        serializer = ListingInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        listing = serializer.save(business=my_business(request))
+        return Response(ListingSerializer(listing).data, status=201)
 
     def partial_update(self, request, *args, **kwargs):
         """PATCH listings/{id}/: the serializer checks each field, services.edit_listing checks the rules."""
         listing = self.get_object()
-        serializer = self.get_serializer(listing, data=request.data, partial=True)
+        serializer = ListingInputSerializer(listing, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         services.edit_listing(listing, my_business(request), serializer.validated_data)
-        return Response(self.get_serializer(listing).data)
+        return Response(ListingSerializer(listing).data)
 
     def destroy(self, request, *args, **kwargs):
         """DELETE listings/{id}/."""
@@ -159,14 +165,14 @@ class ListingViewSet(viewsets.ModelViewSet):
         listing = self.get_object()
         declined = services.withdraw(listing, my_business(request))
         return Response({"message": f"Listing withdrawn. {declined} waiting request(s) were declined.",
-                         "listing": self.get_serializer(listing).data})
+                         "listing": ListingSerializer(listing).data})
 
     @action(detail=True, methods=["post"])
     def relist(self, request, pk=None):
         until = timezone.localdate() + timedelta(days=7)
         new_listing = services.list_again(self.get_object(), my_business(request), until)
         return Response({"message": f"Listed again until {until:%d %b}.",
-                         "listing": self.get_serializer(new_listing).data}, status=201)
+                         "listing": ListingSerializer(new_listing).data}, status=201)
 
 
 # ---------- Needs (buyers) ----------
@@ -179,24 +185,23 @@ class NeedViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return Need.objects.filter(business=my_business(self.request)).select_related("material", "business__area")
 
-    def perform_create(self, serializer):
-        serializer.save(business=my_business(self.request))
+    def create(self, request, *args, **kwargs):
+        serializer = NeedInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        need = serializer.save(business=my_business(request))
+        return Response(NeedSerializer(need).data, status=201)
 
     def retrieve(self, request, *args, **kwargs):
         """GET needs/{id}/: the need, its progress and its pickup requests."""
-        need = self.get_object()
-        pickups = need.pickups.select_related("listing__business", "listing__material", "need__business")
-        data = self.get_serializer(need).data
-        data["pickups"] = PickupSerializer(pickups, many=True, context={"business": need.business}).data
-        return Response(data)
+        return Response(NeedDetailSerializer(self.get_object()).data)
 
     def partial_update(self, request, *args, **kwargs):
         """PATCH needs/{id}/: kg, max_km, needed_by or note. Changing max_km is how the buyer widens the search."""
         need = self.get_object()
-        serializer = self.get_serializer(need, data=request.data, partial=True)
+        serializer = NeedInputSerializer(need, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         services.edit_need(need, my_business(request), serializer.validated_data)
-        return Response(self.get_serializer(need).data)
+        return Response(NeedSerializer(need).data)
 
     def destroy(self, request, *args, **kwargs):
         services.delete_need(self.get_object(), my_business(request))
@@ -208,7 +213,7 @@ class NeedViewSet(viewsets.ModelViewSet):
         need = self.get_object()
         result = {"suggestions": [], "covered_kg": 0} if need.closed else services.plan(need)
         return Response({
-            "need": self.get_serializer(need).data,
+            "need": NeedSerializer(need).data,
             "still_needed": services.kg_still_needed(need),
             "covered_kg": result["covered_kg"],
             "suggestions": SuggestionSerializer(result["suggestions"], many=True).data,
@@ -228,7 +233,7 @@ class NeedViewSet(viewsets.ModelViewSet):
         need = self.get_object()
         cancelled = services.close_need(need, my_business(request))
         return Response({"message": f"Need closed. {cancelled} unanswered request(s) were cancelled.",
-                         "need": self.get_serializer(need).data})
+                         "need": NeedSerializer(need).data})
 
 
 # ---------- Pickups (both sides) ----------
@@ -241,7 +246,7 @@ class PickupViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         business = my_business(self.request)
         pickups = (Pickup.objects.filter(Q(need__business=business) | Q(listing__business=business))
-                   .select_related("need__business", "listing__business", "listing__material"))
+                   .select_related("need__business__area", "listing__business__area", "listing__material"))
         status = self.request.query_params.get("status")
         if self.action == "list" and status:
             pickups = pickups.filter(status=status)

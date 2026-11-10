@@ -1,4 +1,9 @@
-"""Turn models into JSON and check incoming JSON. The business rules themselves live in services.py."""
+"""Turn models into JSON and check incoming JSON. The business rules themselves live in services.py.
+
+Requests send ids ("material": 1). Responses show related objects with their id and name
+("material": {"id": 1, "name": "Sawdust"}). So each resource has an *Input* serializer for requests
+and a plain one for responses.
+"""
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -17,6 +22,8 @@ def check_not_in_past(day):
     return day
 
 
+# ---------- Small {"id", "name"} shapes used inside other responses ----------
+
 class AreaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Area
@@ -29,11 +36,56 @@ class MaterialSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "kg_per_sack"]
 
 
+class AreaRefSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Area
+        fields = ["id", "name"]
+
+
+class MaterialRefSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Material
+        fields = ["id", "name"]
+
+
+class BusinessRefSerializer(serializers.ModelSerializer):
+    """Who a buyer or seller is, inside another response. Never a phone number."""
+    area = AreaRefSerializer()
+
+    class Meta:
+        model = Business
+        fields = ["id", "name", "area"]
+
+
+# ---------- Businesses and accounts ----------
+
+class PublicBusinessSerializer(serializers.ModelSerializer):
+    """What anyone may see about a business. No phone: that is shared only after a pickup is agreed."""
+    area = AreaRefSerializer()
+    completed_pickups = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Business
+        fields = ["id", "name", "kind", "area", "completed_pickups"]
+
+    def get_completed_pickups(self, business) -> int:
+        return services.completed_pickups(business)
+
+
 class BusinessSerializer(serializers.ModelSerializer):
-    """Your own business, phone included. Other people only ever see PublicBusinessSerializer."""
+    """Your own business, phone included. Only you see this (login, register, GET /api/me/)."""
+    area = AreaRefSerializer()
+
     class Meta:
         model = Business
         fields = ["id", "name", "kind", "area", "phone"]
+
+
+class BusinessInputSerializer(serializers.ModelSerializer):
+    """PATCH /api/me/: the fields you can change on your business."""
+    class Meta:
+        model = Business
+        fields = ["name", "kind", "area", "phone"]
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -75,71 +127,64 @@ class LoginSerializer(TokenObtainPairSerializer):
         return data
 
 
-class PublicBusinessSerializer(serializers.ModelSerializer):
-    """What anyone may see about a business. No phone: that is shared only after a pickup is agreed."""
-    area = serializers.StringRelatedField()
-    completed_pickups = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Business
-        fields = ["id", "name", "kind", "area", "completed_pickups"]
-
-    def get_completed_pickups(self, business):
-        return services.completed_pickups(business)
-
+# ---------- Listings ----------
 
 class ListingSerializer(serializers.ModelSerializer):
-    business = PublicBusinessSerializer(read_only=True)
-    material_name = serializers.StringRelatedField(source="material", read_only=True)
+    seller = BusinessRefSerializer(source="business")
+    material = MaterialRefSerializer()
     kg_left = serializers.SerializerMethodField()
-    live = serializers.SerializerMethodField()
+    is_live = serializers.SerializerMethodField()
 
     class Meta:
         model = Listing
-        fields = ["id", "business", "material", "material_name", "quantity", "unit", "kg", "kg_left", "live",
-                  "condition", "price_per_unit", "available_until", "description", "withdrawn", "created_at"]
-        read_only_fields = ["kg", "withdrawn", "created_at"]
+        fields = ["id", "seller", "material", "quantity", "unit", "kg", "kg_left", "condition", "price_per_unit",
+                  "available_until", "description", "is_live", "created_at"]
 
-    def get_kg_left(self, listing):
+    def get_kg_left(self, listing) -> int:
         return services.kg_left(listing)
 
-    def get_live(self, listing):
+    def get_is_live(self, listing) -> bool:
         return services.is_live(listing)
+
+
+class ListingInputSerializer(serializers.ModelSerializer):
+    """POST and PATCH listings/. kg is worked out from quantity and unit, so it isn't sent."""
+    class Meta:
+        model = Listing
+        fields = ["material", "quantity", "unit", "condition", "price_per_unit", "available_until", "description"]
 
     def validate_available_until(self, day):
         return check_not_in_past(day)
 
 
-class NeedSerializer(serializers.ModelSerializer):
-    material_name = serializers.StringRelatedField(source="material", read_only=True)
-    progress = serializers.SerializerMethodField()
+# ---------- Pickups ----------
+
+class PickupListingSerializer(serializers.ModelSerializer):
+    """The listing a pickup is for, with how many kilos are still free on it."""
+    material = MaterialRefSerializer()
+    kg_left = serializers.SerializerMethodField()
 
     class Meta:
-        model = Need
-        fields = ["id", "material", "material_name", "kg", "max_km", "needed_by", "note", "closed",
-                  "created_at", "progress"]
-        read_only_fields = ["closed", "created_at"]
+        model = Listing
+        fields = ["id", "material", "kg_left"]
 
-    def get_progress(self, need):
-        return services.progress(need)
-
-    def validate_needed_by(self, day):
-        return check_not_in_past(day)
+    def get_kg_left(self, listing) -> int:
+        return services.kg_left(listing)
 
 
 class PickupSerializer(serializers.ModelSerializer):
-    status_label = serializers.CharField(source="get_status_display", read_only=True)
-    material = serializers.StringRelatedField(source="listing.material")
-    buyer = serializers.StringRelatedField()
-    seller = serializers.StringRelatedField()
+    status_label = serializers.CharField(source="get_status_display")
+    listing = PickupListingSerializer()
+    buyer = BusinessRefSerializer()
+    seller = BusinessRefSerializer()
     other_phone = serializers.SerializerMethodField()
 
     class Meta:
         model = Pickup
-        fields = ["id", "need", "listing", "material", "kg", "status", "status_label", "buyer", "seller",
-                  "other_phone", "created_at", "updated_at"]
+        fields = ["id", "status", "status_label", "kg", "listing", "buyer", "seller", "other_phone",
+                  "created_at", "updated_at"]
 
-    def get_other_phone(self, pickup):
+    def get_other_phone(self, pickup) -> str | None:
         """Each side sees the other's phone only once the seller has agreed."""
         if pickup.status not in services.HOLDS_KILOS:
             return None
@@ -152,29 +197,76 @@ class PickupSerializer(serializers.ModelSerializer):
 
 
 class PickupCreateSerializer(serializers.Serializer):
-    """Input for asking a seller. The amount rules (at least 1 kg, not more than is left) stay in services."""
+    """POST pickups/. The amount rules (at least 1 kg, not more than is left) stay in services."""
     need = serializers.PrimaryKeyRelatedField(queryset=Need.objects.all())
     listing = serializers.PrimaryKeyRelatedField(queryset=Listing.objects.all())
     kg = serializers.IntegerField()
 
 
 class PickupKgSerializer(serializers.Serializer):
-    """The only thing a buyer may PATCH on a pickup request."""
+    """PATCH pickups/{id}/: the only thing a buyer may change on a request."""
     kg = serializers.IntegerField()
+
+
+# ---------- Needs ----------
+
+class ProgressSerializer(serializers.Serializer):
+    collected = serializers.IntegerField()
+    agreed = serializers.IntegerField()
+    waiting = serializers.IntegerField()
+    still_needed = serializers.IntegerField()
+
+
+class NeedSerializer(serializers.ModelSerializer):
+    business = BusinessRefSerializer()
+    material = MaterialRefSerializer()
+    progress = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Need
+        fields = ["id", "business", "material", "kg", "max_km", "needed_by", "note", "closed", "progress",
+                  "created_at"]
+
+    def get_progress(self, need):
+        return services.progress(need)
+
+
+class NeedDetailSerializer(NeedSerializer):
+    """GET needs/{id}/: the need plus its pickup requests."""
+    pickups = serializers.SerializerMethodField()
+
+    class Meta(NeedSerializer.Meta):
+        fields = NeedSerializer.Meta.fields + ["pickups"]
+
+    def get_pickups(self, need):
+        pickups = need.pickups.select_related("listing__material", "need__business__area",
+                                              "listing__business__area")
+        # The buyer is looking, so agreed pickups show the seller's phone.
+        return PickupSerializer(pickups, many=True, context={"business": need.business}).data
+
+
+class NeedInputSerializer(serializers.ModelSerializer):
+    """POST and PATCH needs/."""
+    class Meta:
+        model = Need
+        fields = ["material", "kg", "max_km", "needed_by", "note"]
+
+    def validate_needed_by(self, day):
+        return check_not_in_past(day)
+
+
+class SuggestionListingSerializer(serializers.ModelSerializer):
+    material = MaterialRefSerializer()
+
+    class Meta:
+        model = Listing
+        fields = ["id", "material"]
 
 
 class SuggestionSerializer(serializers.Serializer):
     """One row of plan(): a seller to ask and how much to ask them for. No phone."""
-    listing = serializers.SerializerMethodField()
-    seller = serializers.SerializerMethodField()
+    listing = SuggestionListingSerializer()
+    seller = BusinessRefSerializer(source="listing.business")
     km = serializers.FloatField()
     kg_left = serializers.IntegerField()
     suggested_kg = serializers.IntegerField()
-
-    def get_listing(self, row):
-        listing = row["listing"]
-        return {"id": listing.id, "material": {"id": listing.material_id, "name": listing.material.name}}
-
-    def get_seller(self, row):
-        seller = row["listing"].business
-        return {"id": seller.id, "name": seller.name, "area": seller.area.name}
