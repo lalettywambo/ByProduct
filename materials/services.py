@@ -193,7 +193,7 @@ def change_pickup_kg(pickup, by, kg):
     # This request's own kilos already count as "asked for", so add them back before comparing.
     can_ask = kg_still_needed(pickup.need) + pickup.kg
     if kg > can_ask:
-        raise RuleError(f"You only need {can_ask} kg from this seller.")
+        raise RuleError(f"You can ask this seller for at most {can_ask} kg.")
     pickup.kg = kg
     pickup.save()
     return pickup

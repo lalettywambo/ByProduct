@@ -152,6 +152,10 @@ class ListingInputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Listing
         fields = ["material", "quantity", "unit", "condition", "price_per_unit", "available_until", "description"]
+        extra_kwargs = {
+            "unit": {"error_messages": {"invalid_choice": 'Unit must be "kg" or "sack".'}},
+            "condition": {"error_messages": {"invalid_choice": 'Condition must be "sorted" or "mixed".'}},
+        }
 
     def validate_available_until(self, day):
         return check_not_in_past(day)
@@ -250,6 +254,7 @@ class NeedInputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Need
         fields = ["material", "kg", "max_km", "needed_by", "note"]
+        extra_kwargs = {"max_km": {"error_messages": {"invalid_choice": "Pick 5, 10 or 20 km."}}}
 
     def validate_needed_by(self, day):
         return check_not_in_past(day)
