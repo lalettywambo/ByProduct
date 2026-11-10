@@ -9,6 +9,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
+from rest_framework.views import exception_handler as drf_exception_handler
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import services
@@ -30,6 +31,15 @@ def rule_error(error):
     """A rule in services.py said no. The wrong business acting is 403; anything else (state, amounts) is 400."""
     status = 403 if isinstance(error, services.NotAllowed) else 400
     return Response({"detail": str(error)}, status=status)
+
+
+def api_exception_handler(error, context):
+    """Turn a rule in services.py saying no into a response, so views don't need try/except everywhere.
+    The wrong business acting is 403; anything else (state, amounts) is 400. Set in settings.py."""
+    if isinstance(error, services.RuleError):
+        status = 403 if isinstance(error, services.NotAllowed) else 400
+        return Response({"detail": str(error)}, status=status)
+    return drf_exception_handler(error, context)
 
 
 # ---------- Accounts ----------
