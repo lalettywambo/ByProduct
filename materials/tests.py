@@ -705,6 +705,12 @@ class SeedDemo(APITestCase):
         self.assertEqual(Business.objects.count(), 12)
         self.assertEqual(User.objects.count(), 12)
         self.assertTrue(User.objects.get(username="moto").check_password("Demo-Pass-2026"))
+        # Every demo user can really log in through the API with DEMO_PASSWORD.
+        for username in ("moto", "doors", "sofas"):
+            login = self.client.post("/api/auth/login/", {"username": username, "password": "Demo-Pass-2026"},
+                                     format="json")
+            self.assertEqual(login.status_code, 200, username)
+            self.assertIn("access", login.data)
         self.assertEqual(self.client.get("/api/listings/").data["count"], 9)
         self.assertEqual(self.client.get("/api/impact/").data["total_kg"], 1215)
 

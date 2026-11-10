@@ -2,6 +2,7 @@
 import os
 from datetime import timedelta
 
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
@@ -64,10 +65,13 @@ class Command(BaseCommand):
         Business.objects.filter(name__in=[row[1] for row in BUSINESSES]).delete()
         User.objects.filter(username__in=[row[0] for row in BUSINESSES]).delete()
 
+        # Hashing a password is slow on purpose (seconds each), so hash DEMO_PASSWORD once and give every
+        # demo login the same stored hash. Each still logs in with DEMO_PASSWORD as normal.
+        password_hash = make_password(password)
         today = timezone.localdate()
         business = {}
         for username, name, kind, area, phone in BUSINESSES:
-            user = User.objects.create_user(username=username, password=password)
+            user = User.objects.create(username=username, password=password_hash)
             business[username] = Business.objects.create(user=user, name=name, kind=kind,
                                                          area=Area.objects.get(name=area), phone=phone)
 
