@@ -34,6 +34,16 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = [h for h in os.getenv('ALLOWED_HOSTS', '').split(',') if h]
 
+# Render sets these on its servers: allow the site's own address and trust its HTTPS proxy.
+RENDER_EXTERNAL_HOSTNAME = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_EXTERNAL_HOSTNAME:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
+    CSRF_TRUSTED_ORIGINS = [f'https://{RENDER_EXTERNAL_HOSTNAME}']
+if os.getenv('RENDER'):
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
 
 # Application definition
 
@@ -55,6 +65,8 @@ MIDDLEWARE = [
     # First, so CORS headers are added even to responses other middleware ends early.
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # Serves the collected static files (admin and API docs) when DEBUG is off.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -83,6 +95,20 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 
+# Static files (CSS, JavaScript, Images)
+# https://docs.djangoproject.com/en/6.1/howto/static-files/
+
+STATIC_URL = 'static/'
+# collectstatic copies every app's static files here; WhiteNoise serves them from this folder.
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    # Compressed copies with a hash in each file name, so browsers can cache them forever.
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+}
+
+
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
@@ -100,6 +126,8 @@ if 'test' in sys.argv:
     # Real logins hash passwords slowly on purpose (about 5 s each on this laptop). Tests create many
     # users, so they use a fast hash instead. This never applies to the running site.
     PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+    # Tests don't run collectstatic, so they use plain static storage instead of the manifest.
+    STORAGES['staticfiles'] = {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'}
     # Tests run on a local SQLite file instead of Neon, which is far away and slow.
     # Set TEST_ON_NEON=1 to run them on Postgres, where select_for_update really locks rows.
     if not os.getenv('TEST_ON_NEON'):
@@ -140,12 +168,6 @@ TIME_ZONE = 'Africa/Nairobi'
 USE_I18N = True
 
 USE_TZ = True
-
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/6.1/howto/static-files/
-
-STATIC_URL = 'static/'
 
 
 # Email
