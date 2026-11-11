@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: byproduct-api
+    runtime: python
+    plan: free
+    region: ohio
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --no-input && python manage.py migrate
+    startCommand: gunicorn config.wsgi:application
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: CORS_ALLOWED_ORIGINS
+        value: http://localhost:5173
+      - key: WEB_CONCURRENCY
+        value: "2"
